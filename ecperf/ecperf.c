@@ -197,7 +197,7 @@ M_TimeOperation(void (*threadFunc)(void *),
 /* Test curve using specific field arithmetic. */
 #define ECTEST_NAMED_GFP(name_c, name_v)                                        \
     if (usefreebl) {                                                            \
-        printf("Testing %s using freebl implementation...\n", name_c);          \
+        printf("testing named gfp\nTesting %s using freebl implementation...\n", name_c);          \
         rv = ectest_curve_freebl(name_v, iterations, numThreads, ec_field_GFp); \
         if (rv != SECSuccess)                                                   \
             goto cleanup;                                                       \
@@ -213,8 +213,8 @@ M_TimeOperation(void (*threadFunc)(void *),
 
 /* Test curve using specific field arithmetic. */
 #define ECTEST_NAMED_CUSTOM(name_c, name_v)                                       \
-    if (usefreebl) {                                                              \
-        printf("Testing %s using freebl implementation...\n", name_c);            \
+    if (usefreebl) {                                                            \
+        printf("testing named custom\nTesting %s using freebl implementation...\n", name_c);            \
         rv = ectest_curve_freebl(name_v, iterations, numThreads, ec_field_plain); \
         if (rv != SECSuccess)                                                     \
             goto cleanup;                                                         \
