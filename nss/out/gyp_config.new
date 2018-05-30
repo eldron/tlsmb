@@ -1,0 +1,6 @@
+CC=
+CCC=
+CXX=
+--depth=/home/work/Documents/tlsmb/nss
+-Dnss_dist_dir=/home/work/Documents/tlsmb/dist
+--generator-output=.
