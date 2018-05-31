@@ -886,7 +886,7 @@ config_match(const ssl3CipherSuiteCfg *suite, PRUint8 policy,
 }
 
 /* Return the number of cipher suites that are usable. */
-/* called from ssl3_SendClientHello */
+/* called from  */
 static unsigned int
 count_cipher_suites(sslSocket *ss, PRUint8 policy)
 {

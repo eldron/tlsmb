@@ -1,6 +1,9 @@
 {
     "git.ignoreLimitWarning": true,
     "files.associations": {
-        "ec.h": "c"
+        "ec.h": "c",
+        "array": "c",
+        "string_view": "c",
+        "typeinfo": "c"
     }
 }
