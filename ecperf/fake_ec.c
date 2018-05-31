@@ -1,4 +1,8 @@
 #include "mb_ec_util.h"
+#include "mpi.h"
+#include "ecl.h"
+
+#include <stdio.h>
 
 #define MB_CHECK_MPI_OK(func)      \
     if (MP_OKAY > (err = func)) \
@@ -219,7 +223,7 @@ unsigned char * generate_ec_private_key_for_middlebox(ECParams * ecParams,
         result.len = ((ecParams->fieldID.size + 7) >> 3) * 2 + 1;
         result.data = PORT_Alloc(result.len);
         if(result.data == NULL){
-            fpirntf(stderr, "alloc memory for result failed\n");
+            fprintf(stderr, "alloc memory for result failed\n");
             return NULL;
         }
 

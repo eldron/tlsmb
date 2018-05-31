@@ -2,14 +2,19 @@
 #define __mb_ec_util_h
 
 #include "blapi.h"
-#include "prerr.h"
-#include "secerr.h"
-#include "secmpi.h"
-#include "secitem.h"
-#include "mplogic.h"
-#include "ec.h"
-#include "ecl.h"
-#include "blapit.h"
+#include "ecl-exp.h"
+#include "plarena.h"
+#include "mpi.h"
+
+/*
+ * Computes scalar point multiplication pointQ = k1 * G + k2 * pointP for
+ * the curve whose parameters are encoded in params with base point G.
+ */
+extern SECStatus
+ec_points_mul(const ECParams *params, const mp_int *k1, const mp_int *k2,
+              const SECItem *pointP, SECItem *pointQ);
+
+extern SECStatus SECU_ecName2params(ECCurveName curve, SECItem *params);
 
 /*
  * Computes scalar point multiplication pointQ = k1 * G + k2 * pointP for

@@ -1,4 +1,3 @@
-#include "mb_ec_util.h"
 #include "blapi.h"
 #include "ec.h"
 #include "ecl-curve.h"
@@ -6,9 +5,12 @@
 #include "basicutil.h"
 #include "pkcs11.h"
 #include "nspr.h"
+
+#include "mb_ec_util.h"
+
 #include <stdio.h>
 
-void main(){
+int main(){
     const char * nist256name = "NIST-P256";
     const char * nist384name = "NIST-P384";
     const char * nist521name = "NIST-P521";
