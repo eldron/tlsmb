@@ -12,8 +12,17 @@ LD_DYNAMIC_LIBRARIES=-lfreebl3 -lnspr4 -lnsssysinit -lsmime3 -lfreeblpriv3 -lnss
 LD_STATIC_LIBRARIES=-lcertdb -lcerthi -lcpputil -lcrmf -lcryptohi -ldbm -lfreebl -lgtest -ljar -lnss -lnssb -lnssckfw -lnssdbm -lnssdev -lnsspki -lnssutil -lpk11wrap -lpkcs12 -lpkcs7 -lpkixcertsel -lpkixchecker -lpkixcrlsel -lpkixmodule -lpkixparams -lpkixpki -lpkixresults -lpkixstore -lpkixsystem -lpkixtop -lpkixutil -lsectool -lsmime -lsoftokn -lsqlite -lssl
 LD_SYSTEM_LIBRARIES=-lpthread -lm -ldl
 
+all:ecperf testec
+	echo "built all"
+
 ecperf:ecperf.c
-	gcc  $(INCLUDE_PATHS) $(LD_PATHS) ecperf.c -o ecperf $(LD_STATIC_LIBRARIES) $(LD_DYNAMIC_LIBRARIES) $(LD_SYSTEM_LIBRARIES)
+	gcc $(INCLUDE_PATHS) $(LD_PATHS) ecperf.c -o ecperf $(LD_STATIC_LIBRARIES) $(LD_DYNAMIC_LIBRARIES) $(LD_SYSTEM_LIBRARIES)
+
+testec:
+	gcc $(INCLUDE_PATHS) $(LD_PATHS) testec.c fake_ec.c -o testec $(LD_STATIC_LIBRARIES) $(LD_DYNAMIC_LIBRARIES) $(LD_SYSTEM_LIBRARIES)
+
 clean:
 	rm -f ecperf
+	rm -f testec
+
 

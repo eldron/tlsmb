@@ -1,12 +1,8 @@
-#include "blapi.h"
-#include "prerr.h"
-#include "secerr.h"
-#include "secmpi.h"
-#include "secitem.h"
-#include "mplogic.h"
-#include "ec.h"
-#include "ecl.h"
-#include "blapit.h"
+#include "mb_ec_util.h"
+
+#define MB_CHECK_MPI_OK(func)      \
+    if (MP_OKAY > (err = func)) \
+    return NULL
 
 /*
  * Computes scalar point multiplication pointQ = k1 * G + k2 * pointP for
@@ -29,21 +25,15 @@
 
 // used by client
 // generate a_{n+1}=H(g^(alpha*a_{n}))
-// order: a buffer that holds the curve's group order
-// len: the length in octets of the order buffer, also the length of the private key bytes buffer
-// alpha_bytes: alpha, of length len
-// prev_private_key_bytes: a_{n}
-// new_private_key_bytes: a_{n + 1}
-static unsigned char *
-fake_ec_GenerateRandomPrivateKey(PLArenaPool * arena, ECParams * ecParams,
-    const unsigned char *order, int len,
-    unsigned char * alpha_bytes,
-    unsigned char * prev_private_key_bytes, unsigned char * new_private_key_bytes)
+// alpha_bytes: alpha, of length len, the length on octets of the order buffer
+// prev_private_key_bytes: input a_{n}
+// returns: a_{n + 1}
+unsigned char *
+fake_ec_GenerateRandomPrivateKey(ECParams * ecParams, unsigned char * alpha_bytes,
+    unsigned char * prev_private_key_bytes)
 {
-    if(len != ecParams->order.len){
-        fprintf(stderr, "len != ecParams->order.len, this should not happen\n");
-        return SECFailure;
-    }
+    unsigned char * order = ecParams->order.data;
+    int len = ecParams->order.len;
 
     SECStatus rv = SECSuccess;
     mp_err err;
@@ -53,9 +43,9 @@ fake_ec_GenerateRandomPrivateKey(PLArenaPool * arena, ECParams * ecParams,
     MP_DIGITS(&privKeyVal) = 0;
     MP_DIGITS(&order_1) = 0;
     MP_DIGITS(&one) = 0;
-    CHECK_MPI_OK(mp_init(&privKeyVal));
-    CHECK_MPI_OK(mp_init(&order_1));
-    CHECK_MPI_OK(mp_init(&one));
+    MB_CHECK_MPI_OK(mp_init(&privKeyVal));
+    MB_CHECK_MPI_OK(mp_init(&order_1));
+    MB_CHECK_MPI_OK(mp_init(&one));
 
     /* Generates 2*len random bytes using the global random bit generator
      * (which implements Algorithm 1 of FIPS 186-2 Change Notice 1) then
@@ -70,14 +60,14 @@ fake_ec_GenerateRandomPrivateKey(PLArenaPool * arena, ECParams * ecParams,
     // compute g^(alpha * a_{n})
     mp_int alpha_value;
     mp_int prev_private_key_value;
-    CHECK_MPI_OK(mp_init(&alpha_value));
-    CHECK_MPI_OK(mp_init(&prev_private_key_value));
+    MB_CHECK_MPI_OK(mp_init(&alpha_value));
+    MB_CHECK_MPI_OK(mp_init(&prev_private_key_value));
     if(alpha_bytes){
         mp_read_unsigned_octets(&alpha_value, alpha_bytes, len);
     } else {
         mp_set_int(&alpha_value, 2);
     }
-    CHECK_MPI_OK(mp_mul(&alpha_value, &prev_private_key_value, &alpha_value));
+    MB_CHECK_MPI_OK(mp_mul(&alpha_value, &prev_private_key_value, &alpha_value));
 
     SECItem alpha_item;// use this for calculation
     alpha_item.len = len;
@@ -86,7 +76,7 @@ fake_ec_GenerateRandomPrivateKey(PLArenaPool * arena, ECParams * ecParams,
         fprintf(stderr, "failed to alloc mem for alpha_item\n");
         return NULL;
     }
-    CHECK_MPI_OK(mp_to_fixlen_octets(&alpha_value, alpha_item.data, len));
+    MB_CHECK_MPI_OK(mp_to_fixlen_octets(&alpha_value, alpha_item.data, len));
 
     SECItem pubkey;
     if(ecParams->name == ECCurve25519){
@@ -122,15 +112,15 @@ fake_ec_GenerateRandomPrivateKey(PLArenaPool * arena, ECParams * ecParams,
     unsigned char sha512_hash_bytes[SHA512_LENGTH];
     if(ecParams->name == ECCurve25519){
         // for x25519, we hash 32 bytes U
-        pubkey->len = 32;
-        SHA512_HashBuf(sha512_hash_bytes, pubkey->data, pubkey->len);
+        pubkey.len = 32;
+        SHA512_HashBuf(sha512_hash_bytes, pubkey.data, pubkey.len);
     } else if(ecParams->name == ECCurve_NIST_P256 ||
         ecParams->name == ECCurve_NIST_P384 ||
         ecParams->name == ECCurve_NIST_P521){
         
         // for secp 256, 348, 521 curves, we hash legacy_form, X and Y together
-        pubkey->len = ((ecParams->fieldID.size + 7) >> 3) * 2 + 1;
-        SHA512_HashBuf(sha512_hash_bytes, pubkey->data, pubkey->len);
+        pubkey.len = ((ecParams->fieldID.size + 7) >> 3) * 2 + 1;
+        SHA512_HashBuf(sha512_hash_bytes, pubkey.data, pubkey.len);
     } else {
         fprintf(stderr, "unsupported curve name\n");
         return NULL;
@@ -147,13 +137,13 @@ fake_ec_GenerateRandomPrivateKey(PLArenaPool * arena, ECParams * ecParams,
         memcpy(to, sha512_hash_bytes, tmp_len);
     }
 
-    CHECK_MPI_OK(mp_read_unsigned_octets(&privKeyVal, privKeyBytes, 2 * len));
-    CHECK_MPI_OK(mp_read_unsigned_octets(&order_1, order, len));
-    CHECK_MPI_OK(mp_set_int(&one, 1));
-    CHECK_MPI_OK(mp_sub(&order_1, &one, &order_1));
-    CHECK_MPI_OK(mp_mod(&privKeyVal, &order_1, &privKeyVal));
-    CHECK_MPI_OK(mp_add(&privKeyVal, &one, &privKeyVal));
-    CHECK_MPI_OK(mp_to_fixlen_octets(&privKeyVal, privKeyBytes, len));
+    MB_CHECK_MPI_OK(mp_read_unsigned_octets(&privKeyVal, privKeyBytes, 2 * len));
+    MB_CHECK_MPI_OK(mp_read_unsigned_octets(&order_1, order, len));
+    MB_CHECK_MPI_OK(mp_set_int(&one, 1));
+    MB_CHECK_MPI_OK(mp_sub(&order_1, &one, &order_1));
+    MB_CHECK_MPI_OK(mp_mod(&privKeyVal, &order_1, &privKeyVal));
+    MB_CHECK_MPI_OK(mp_add(&privKeyVal, &one, &privKeyVal));
+    MB_CHECK_MPI_OK(mp_to_fixlen_octets(&privKeyVal, privKeyBytes, len));
     memset(privKeyBytes + len, 0, len);// outside functions should use privKeyBytes as an array of length len
 
     mp_clear(&privKeyVal);
@@ -165,21 +155,23 @@ fake_ec_GenerateRandomPrivateKey(PLArenaPool * arena, ECParams * ecParams,
 
 // used by middlebox
 // calculate a_{n+1}=H(A_{n}^alpha)
-// order: a buffer that holds the curve's group order
-// len: the length in octets of the order buffer, also the length of the private key bytes buffer
-// alpha_bytes: alpha, of length len
-static unsigned char * generate_ec_private_key_for_middlebox(ECParams * ecParams, 
-    SECItem * A, const unsigned char *order, int len, unsigned char * alpha_bytes){
+// alpha_bytes: alpha, of length len, the length in octets of the order buffer
+// returns: a_{n+1}
+unsigned char * generate_ec_private_key_for_middlebox(ECParams * ecParams, 
+    SECItem * A, unsigned char * alpha_bytes){
 
+    unsigned char * order = ecParams->order.data;
+    int len = ecParams->order.len;
     unsigned char *privKeyBytes = NULL;
     mp_int privKeyVal, order_1, one;
-    
+    mp_err err = MP_OKAY;
+
     MP_DIGITS(&privKeyVal) = 0;
     MP_DIGITS(&order_1) = 0;
     MP_DIGITS(&one) = 0;
-    CHECK_MPI_OK(mp_init(&privKeyVal));
-    CHECK_MPI_OK(mp_init(&order_1));
-    CHECK_MPI_OK(mp_init(&one));
+    MB_CHECK_MPI_OK(mp_init(&privKeyVal));
+    MB_CHECK_MPI_OK(mp_init(&order_1));
+    MB_CHECK_MPI_OK(mp_init(&one));
 
     if ((privKeyBytes = PORT_Alloc(2 * len)) == NULL){
         fprintf(stderr, "can not allocate privKeyBytes\n");
@@ -188,8 +180,8 @@ static unsigned char * generate_ec_private_key_for_middlebox(ECParams * ecParams
 
     mp_int alpha_value;
     mp_int prev_private_key_value;
-    CHECK_MPI_OK(mp_init(&alpha_value));
-    CHECK_MPI_OK(mp_init(&prev_private_key_value));
+    MB_CHECK_MPI_OK(mp_init(&alpha_value));
+    MB_CHECK_MPI_OK(mp_init(&prev_private_key_value));
     if(alpha_bytes){
         mp_read_unsigned_octets(&alpha_value, alpha_bytes, len);
     } else {
@@ -251,13 +243,13 @@ static unsigned char * generate_ec_private_key_for_middlebox(ECParams * ecParams
         memcpy(to, sha512_hash_bytes, tmp_len);
     }
 
-    CHECK_MPI_OK(mp_read_unsigned_octets(&privKeyVal, privKeyBytes, 2 * len));
-    CHECK_MPI_OK(mp_read_unsigned_octets(&order_1, order, len));
-    CHECK_MPI_OK(mp_set_int(&one, 1));
-    CHECK_MPI_OK(mp_sub(&order_1, &one, &order_1));
-    CHECK_MPI_OK(mp_mod(&privKeyVal, &order_1, &privKeyVal));
-    CHECK_MPI_OK(mp_add(&privKeyVal, &one, &privKeyVal));
-    CHECK_MPI_OK(mp_to_fixlen_octets(&privKeyVal, privKeyBytes, len));
+    MB_CHECK_MPI_OK(mp_read_unsigned_octets(&privKeyVal, privKeyBytes, 2 * len));
+    MB_CHECK_MPI_OK(mp_read_unsigned_octets(&order_1, order, len));
+    MB_CHECK_MPI_OK(mp_set_int(&one, 1));
+    MB_CHECK_MPI_OK(mp_sub(&order_1, &one, &order_1));
+    MB_CHECK_MPI_OK(mp_mod(&privKeyVal, &order_1, &privKeyVal));
+    MB_CHECK_MPI_OK(mp_add(&privKeyVal, &one, &privKeyVal));
+    MB_CHECK_MPI_OK(mp_to_fixlen_octets(&privKeyVal, privKeyBytes, len));
     memset(privKeyBytes + len, 0, len);// outside functions should use privKeyBytes as an array of length len
 
     mp_clear(&privKeyVal);
@@ -265,4 +257,26 @@ static unsigned char * generate_ec_private_key_for_middlebox(ECParams * ecParams
     mp_clear(&one);
 
     return privKeyBytes;
+}
+
+ECParams * mb_get_ec_params(ECCurveName curve, PLArenaPool * arena){
+    if(arena == NULL){
+        fprintf(stderr, "mb_get_ec_params: arena is NULL\n");
+        return NULL;
+    }
+
+    ECParams * ecParams = (ECParams *) PORT_ArenaZAlloc(arena, sizeof(ECParams));
+    if(ecParams == NULL){
+        fprintf(stderr, "mb_get_ec_params: alloc for ecParams failed\n");
+        return NULL;
+    }
+    SECItem ecEncodedParams = { siBuffer, NULL, 0 };
+    SECStatus rv = SECU_ecName2params(curve, &ecEncodedParams);
+    if (rv != SECSuccess) {
+        fprintf(stderr, "mb_get_ec_params: SECU_ecName2params failed\n");
+        return NULL;
+    }
+    EC_FillParams(arena, &ecEncodedParams, ecParams);
+
+    return ecParams;
 }
