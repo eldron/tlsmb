@@ -4,6 +4,8 @@
 
 #include <stdio.h>
 
+extern mp_err mp_init(mp_int *mp);
+
 #define MB_CHECK_MPI_OK(func)      \
     if (MP_OKAY > (err = func)) \
     return NULL
@@ -269,18 +271,27 @@ ECParams * mb_get_ec_params(ECCurveName curve, PLArenaPool * arena){
         return NULL;
     }
 
-    ECParams * ecParams = (ECParams *) PORT_ArenaZAlloc(arena, sizeof(ECParams));
+    ECParams * ecParams = (ECParams *) malloc(sizeof(ECParams));
     if(ecParams == NULL){
         fprintf(stderr, "mb_get_ec_params: alloc for ecParams failed\n");
         return NULL;
+    } else {
+        fprintf(stderr, "mb_get_ec_params: alloc for ecParams succeeded\n");
     }
+    memset(ecParams, 0, sizeof(ECParams));
+
     SECItem ecEncodedParams = { siBuffer, NULL, 0 };
     SECStatus rv = SECU_ecName2params(curve, &ecEncodedParams);
     if (rv != SECSuccess) {
         fprintf(stderr, "mb_get_ec_params: SECU_ecName2params failed\n");
         return NULL;
+    } else {
+        fprintf(stderr, "mb_get_ec_params: SEC_ecName2params succeeded\n");
     }
+
+    fprintf(stderr, "before EC_FillParams\n");
     EC_FillParams(arena, &ecEncodedParams, ecParams);
+    fprintf(stderr, "after EC_FillParams\n");
 
     return ecParams;
 }

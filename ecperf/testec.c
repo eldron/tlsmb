@@ -16,19 +16,39 @@ int main(){
     const char * nist521name = "NIST-P521";
     const char * name25519 = "Curve25519";
 
+    SECStatus rv = SECOID_Init();
+    if (rv != SECSuccess) {
+        fprintf(stderr, "SECOID_Init failed\n");
+        return 1;
+    } else {
+        fprintf(stderr, "SECOID_Init succeeded\n");
+    }
+
+    rv = RNG_RNGInit();
+    if (rv != SECSuccess) {
+        SECU_PrintError("Error:", "RNG_RNGInit");
+        return -1;
+    }
+    RNG_SystemInfoForRNG();
+    
     PLArenaPool * arena = PORT_NewArena(NSS_FREEBL_DEFAULT_CHUNKSIZE);
     if(arena == NULL){
         fprintf(stderr, "failed to alloc arena\n");
         return 1;
+    } else {
+
     }
 
     printf("testing %s\n", nist256name);
     ECParams * ecParams = mb_get_ec_params(ECCurve_NIST_P256, arena);
+    fprintf(stderr, "got ecParams\n");
     ECPrivateKey *ecPriv = NULL;
-    SECStatus rv = EC_NewKey(ecParams, &ecPriv);
+    rv = EC_NewKey(ecParams, &ecPriv);
     if (rv != SECSuccess) {
         fprintf(stderr, "EC_NewKey failed\n");
         return 1;
+    } else {
+        fprintf(stderr, "EC_NewKey succeeded\n");
     }
 
     printf("testing %s\n", nist384name);

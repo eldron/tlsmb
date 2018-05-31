@@ -599,19 +599,25 @@ main(int argv, char **argc)
     }
 
     if (usepkcs11) {
+        fprintf(stderr, "usepkcs11 is set\n");
         CK_RV crv = NSC_Initialize((CK_VOID_PTR)&pk11args);
         if (crv != CKR_OK) {
             fprintf(stderr, "NSC_Initialize failed crv=0x%x\n", (unsigned int)crv);
             return SECFailure;
         }
+    } else {
+        fprintf(stderr, "usepkcs11 is not set\n");
     }
 
     /* specific arithmetic tests */
     if (nist) {
+        fprintf(stderr, "nist is set\n");
         ECTEST_NAMED_GFP("NIST-P256", ECCurve_NIST_P256);
         ECTEST_NAMED_GFP("NIST-P384", ECCurve_NIST_P384);
         ECTEST_NAMED_GFP("NIST-P521", ECCurve_NIST_P521);
         ECTEST_NAMED_CUSTOM("Curve25519", ECCurve25519);
+    } else {
+        fprintf(stderr, "nist is not set\n");
     }
 
 cleanup:

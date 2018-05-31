@@ -10,8 +10,7 @@
  * Computes scalar point multiplication pointQ = k1 * G + k2 * pointP for
  * the curve whose parameters are encoded in params with base point G.
  */
-extern SECStatus
-ec_points_mul(const ECParams *params, const mp_int *k1, const mp_int *k2,
+extern SECStatus ec_points_mul(const ECParams *params, const mp_int *k1, const mp_int *k2,
               const SECItem *pointP, SECItem *pointQ);
 
 extern SECStatus SECU_ecName2params(ECCurveName curve, SECItem *params);
