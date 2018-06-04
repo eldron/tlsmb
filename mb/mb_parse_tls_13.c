@@ -1083,16 +1083,48 @@ gen_eckey_from_client_hello(struct MBTLSConnection * conn,
     for(cursor = PR_NEXT_LINK(&(ss->ephemeralKeyPairs)); cursor != &(ss->ephemeralKeyPairs); cursor = PR_NEXT_LINK(cursor)){
         sslEphemeralKeyPair * keypair = (sslEphemeralKeyPair *) cursor;
         // print the original private and pubilic key data
-        if(keypair->group.name == ssl_grp_ec_secp256r1){
+        if(keypair->group.name == ssl_grp_ec_secp256r1 ||
+            keypair->group.name == ssl_grp_ec_secp384r1 ||
+            keypair->group.name == ssl_grp_ec_secp521r1 ||
+            keypair->group.name == ssl_grp_ec_curve25519){
+
             CK_OBJECT_HANDLE private_key_handle = keypair->keys->privKey->pkcs11ID;
-            //slot->session
-        } else if(keypair->group.name == ssl_grp_ec_secp384r1){
+            PK11SlotInfo * private_key_slot = keypair->keys->privKey->pkcs11Slot;
+            SECItem item;
+            PK11_ReadAttribute(private_key_slot, private_key_handle, CKA_VALUE, NULL, &item);
+            fprintf(stderr, "private key length is: %u\n", item.len);
+            int i;
+            for(i = 0;i < item.len;i++){
+                fprintf(stderr, "%u ", item.data[i]);
+            }
+            fprintf(stderr, "\n\n");
 
-        } else if(keypair->group.name == ssl_grp_ec_secp521r1){
+            PK11_ReadAttribute(private_key_slot, private_key_handle, CKA_NETSCAPE_DB, NULL, &item);
+            fprintf(stderr, "public key length is %u\n", item.len);
+            for(i = 0;i < item.len;i++){
+                fprintf(stderr, "%u ", item.data[i]);
+            }
+            fprintf(stderr, "\n\n");
 
-        } else if(keypair->group.name == ssl_grp_ec_curve25519){
-
+            CK_OBJECT_HANDLE public_key_handle = keypair->keys->pubKey->pkcs11ID;
+            PK11SlotInfo * public_key_slot = keypair->keys->pubKey->pkcs11Slot;
+            PK11_ReadAttribute(public_key_slot, public_key_handle, CKA_EC_POINT, NULL, &item);
+            fprintf(stderr, "public key len is %u\n", item.len);
+            for(i = 0;i < item.len;i++){
+                fprintf(stderr, "%u ", item.data[i]);
+            }
+            fprintf(stderr, "\n\n");
         }
+
+        // if(keypair->group.name == ssl_grp_ec_secp256r1){
+            
+        // } else if(keypair->group.name == ssl_grp_ec_secp384r1){
+
+        // } else if(keypair->group.name == ssl_grp_ec_secp521r1){
+
+        // } else if(keypair->group.name == ssl_grp_ec_curve25519){
+
+        // }
         // generate fake key pairs, modify 
 
         // print private and public key data again to comfirm
