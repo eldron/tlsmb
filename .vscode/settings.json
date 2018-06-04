@@ -8,6 +8,13 @@
         "stdio.h": "c",
         "mpi.h": "c",
         "stubs.h": "c",
-        "mb_ec_util.h": "c"
+        "mb_ec_util.h": "c",
+        "bitset": "c",
+        "istream": "cpp",
+        "optional": "cpp",
+        "ostream": "cpp",
+        "ratio": "cpp",
+        "system_error": "cpp",
+        "type_traits": "cpp"
     }
 }

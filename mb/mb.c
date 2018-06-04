@@ -193,6 +193,7 @@ void forward_data(int one, int another){
     }
 }
 
+
 // when received the first clieht hello, middlebox record A_{1}
 // when received the n'th client hello, middlebox record A_{n}
 // when received the n'th server hello, middlebox compute a_{n} = A_{n-1}^alpha
@@ -253,12 +254,14 @@ void asymmetric_inspect(int client_fd, int server_fd){
                             // received client hello
                             conn.state = mb_wait_server_hello;
                             // set ss according to the client hello we received
+                            // early secrets are computed here
                             SECStatus rv = set_ss_from_client_hello(&conn, buffer, length);
                             if(rv == SECFailure){
                                 fprintf(stderr, "asymmetric inspect: set_ss_from_client_hello failed\n");
                             }
                             // send data to server, free buffer if ss does not use it
                             write(server_fd, tmp_buf, tmp_length);
+
                         } else {
                             // this should not happen
                             fprintf(stderr, "asymmetric inspect: waiting client hello, received unexpected packet\n");
@@ -508,7 +511,12 @@ int main(int argc, char ** args){
     } else {
         printf("SECOID init succeeded\n");
     }
-    
+
+    // alloc memory for mem_pool
+    mem_pool.idx = 0;
+    mem_pool.length = 128 * 1024 * 1024;
+    mem_pool.data = malloc(mem_pool.length);
+
 	// create server socket
 	int server_socket_fd;
 	int client_socket_fd;

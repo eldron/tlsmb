@@ -579,11 +579,12 @@ SECStatus compute_handshake_secrets_from_server_hello(struct MBTLSConnection * c
 // caled when middlebox received client hello
 // buffer now points to the record layer
 // we should maintain the state indicating whether we are responding to a client hello retry
-// the caller should chck the client hello is a tls 1.3 client hello
+// the caller should check the client hello is a tls 1.3 client hello
 // the caller should set type to client_hello_retry or client_hello_initial
 // the caller is reponsible for setting sid for conn->ss
 // if we set client to not use stateless resumption, caller should set ss->sec.ci.sid = NULL,
 // and ss->opt.noCache = PR_TRUE
+// we should not let client_hello_retry happen
 SECStatus set_ss_from_client_hello(struct MBTLSConnection * conn, 
     sslClientHelloType type, uint8_t * buffer, uint32_t length){
     
@@ -596,7 +597,7 @@ SECStatus set_ss_from_client_hello(struct MBTLSConnection * conn,
     }
     
     ss->vrange.max = SSL_LIBRARY_VERSION_TLS_1_3;// or encoded 
-    sslSessionID *sid;
+    sslSessionID *sid = NULL;
     SECStatus rv;
     unsigned int i;
     unsigned int length;
@@ -661,6 +662,7 @@ SECStatus set_ss_from_client_hello(struct MBTLSConnection * conn,
     // type should never be retransmit or renegotiation, only client_hello_retry
     // or client_hello_initial
     if(type == client_hello_retry){
+        fprintf(stderr, "type is client_hello_retry, this should not happen\n");
         ss->ssl3.hs.helloRetry = PR_TRUE;
         cookieLen = 0;
     } else {
@@ -684,24 +686,24 @@ SECStatus set_ss_from_client_hello(struct MBTLSConnection * conn,
         return SECFailure; /* ssl3_config_match_init has set error code. */
     }
 
-    ss->firstHsDone = PR_FALSE;// renegotiation is not allowed in TlS 1.3
+    //ss->firstHsDone = PR_FALSE;// renegotiation is not allowed in TlS 1.3
     /*
      * During a renegotiation, ss->clientHelloVersion will be used again to
      * work around a Windows SChannel bug. Ensure that it is still enabled.
      */
-    if (ss->firstHsDone) {
-        PORT_Assert(type != client_hello_initial);
-        if (SSL_ALL_VERSIONS_DISABLED(&ss->vrange)) {
-            PORT_SetError(SSL_ERROR_SSL_DISABLED);
-            return SECFailure;
-        }
+    // if (ss->firstHsDone) {
+    //     PORT_Assert(type != client_hello_initial);
+    //     if (SSL_ALL_VERSIONS_DISABLED(&ss->vrange)) {
+    //         PORT_SetError(SSL_ERROR_SSL_DISABLED);
+    //         return SECFailure;
+    //     }
 
-        if (ss->clientHelloVersion < ss->vrange.min ||
-            ss->clientHelloVersion > ss->vrange.max) {
-            PORT_SetError(SSL_ERROR_NO_CYPHER_OVERLAP);
-            return SECFailure;
-        }
-    }
+    //     if (ss->clientHelloVersion < ss->vrange.min ||
+    //         ss->clientHelloVersion > ss->vrange.max) {
+    //         PORT_SetError(SSL_ERROR_NO_CYPHER_OVERLAP);
+    //         return SECFailure;
+    //     }
+    // }
 
     // the caller is reponsible for setting sid
     /* Check if we have a ss->sec.ci.sid.
@@ -1041,4 +1043,107 @@ loser:
     }
     sslBuffer_Clear(&extensionBuf);
     return SECFailure;
+}
+
+// generate ec key pair from client hello
+// we generate fake key pairs for secp256, 348, 521 and x25519
+// we read from file, get A[n], and compute a[n+1]
+// buffer now points to the record layer
+SECStatus
+gen_eckey_from_client_hello(struct MBTLSConnection * conn, 
+    sslClientHelloType type, uint8_t * buffer, uint32_t length)
+{
+    unsigned int i;
+    //SSL3Statistics *ssl3stats = SSL_GetStatistics();
+    NewSessionTicket *session_ticket = NULL;
+    sslSessionID *sid = ss->sec.ci.sid;
+    //unsigned int numShares = 0;
+
+    PORT_Assert(ss->opt.noLocks || ssl_HaveSSL3HandshakeLock(ss));
+    PORT_Assert(ss->opt.noLocks || ssl_HaveXmitBufLock(ss));
+    PORT_Assert(PR_CLIST_IS_EMPTY(&ss->ephemeralKeyPairs));
+
+    // we generate key pair first, then use slot->setAttribute value to modify
+    // private key bytes and public key bytes
+    for (i = 0; i < SSL_NAMED_GROUP_COUNT; ++i) {
+        SECStatus rv;
+        if (!ss->namedGroupPreferences[i]) {
+            continue;
+        }
+        rv = tls13_CreateKeyShare(ss, ss->namedGroupPreferences[i]);
+        if (rv != SECSuccess) {
+            return SECFailure;
+        }
+        if (++numShares > ss->additionalShares) {
+            break;
+        }
+    }
+
+    PRCList * cursor;
+    for(cursor = PR_NEXT_LINK(&(ss->ephemeralKeyPairs)); cursor != &(ss->ephemeralKeyPairs); cursor = PR_NEXT_LINK(cursor)){
+        sslEphemeralKeyPair * keypair = (sslEphemeralKeyPair *) cursor;
+        // print the original private and pubilic key data
+        if(keypair->group.name == ssl_grp_ec_secp256r1){
+            CK_OBJECT_HANDLE private_key_handle = keypair->keys->privKey->pkcs11ID;
+            //slot->session
+        } else if(keypair->group.name == ssl_grp_ec_secp384r1){
+
+        } else if(keypair->group.name == ssl_grp_ec_secp521r1){
+
+        } else if(keypair->group.name == ssl_grp_ec_curve25519){
+
+        }
+        // generate fake key pairs, modify 
+
+        // print private and public key data again to comfirm
+    }
+    
+    if (PR_CLIST_IS_EMPTY(&ss->ephemeralKeyPairs)) {
+        PORT_SetError(SSL_ERROR_NO_CIPHERS_SUPPORTED);
+        return SECFailure;
+    }
+
+    /* Below here checks if we can do stateless resumption. */
+    if (sid->cached == never_cached ||
+        sid->version < SSL_LIBRARY_VERSION_TLS_1_3) {
+        return SECSuccess;
+    }
+
+    /* The caller must be holding sid->u.ssl3.lock for reading. */
+    session_ticket = &sid->u.ssl3.locked.sessionTicket;
+    PORT_Assert(session_ticket && session_ticket->ticket.data);
+
+    if (ssl_TicketTimeValid(session_ticket)) {
+        ss->statelessResume = PR_TRUE;
+    }
+
+    if (ss->statelessResume) {
+        SECStatus rv;
+
+        PORT_Assert(ss->sec.ci.sid);
+        rv = tls13_RecoverWrappedSharedSecret(ss, ss->sec.ci.sid);
+        if (rv != SECSuccess) {
+            FATAL_ERROR(ss, SEC_ERROR_LIBRARY_FAILURE, internal_error);
+            SSL_AtomicIncrementLong(&ssl3stats->sch_sid_cache_not_ok);
+            ssl_UncacheSessionID(ss);
+            ssl_FreeSID(ss->sec.ci.sid);
+            ss->sec.ci.sid = NULL;
+            return SECFailure;
+        }
+
+        ss->ssl3.hs.cipher_suite = ss->sec.ci.sid->u.ssl3.cipherSuite;
+        rv = ssl3_SetupCipherSuite(ss, PR_FALSE);
+        if (rv != SECSuccess) {
+            FATAL_ERROR(ss, PORT_GetError(), internal_error);
+            return SECFailure;
+        }
+
+        rv = tls13_ComputeEarlySecrets(ss);// binder key computed
+        if (rv != SECSuccess) {
+            FATAL_ERROR(ss, SEC_ERROR_LIBRARY_FAILURE, internal_error);
+            return SECFailure;
+        }
+    }
+
+    return SECSuccess;
 }
