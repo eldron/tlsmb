@@ -5,31 +5,96 @@
 #include "basicutil.h"
 #include "pkcs11.h"
 #include "nspr.h"
+#include <stdio.h>
 
 #include "mb_ec_util.h"
 
-#include <stdio.h>
 
-int main(){
-    const char * nist256name = "NIST-P256";
-    const char * nist384name = "NIST-P384";
-    const char * nist521name = "NIST-P521";
-    const char * name25519 = "Curve25519";
+#define __PASTE(x, y) x##y
 
-    SECStatus rv = SECOID_Init();
-    if (rv != SECSuccess) {
-        fprintf(stderr, "SECOID_Init failed\n");
-        return 1;
-    } else {
-        fprintf(stderr, "SECOID_Init succeeded\n");
+/*
+ * Get the NSS specific PKCS #11 function names.
+ */
+#undef CK_PKCS11_FUNCTION_INFO
+#undef CK_NEED_ARG_LIST
+
+#define CK_EXTERN extern
+#define CK_PKCS11_FUNCTION_INFO(func) \
+    CK_RV __PASTE(NS, func)
+#define CK_NEED_ARG_LIST 1
+
+#include "pkcs11f.h"
+
+typedef SECStatus (*op_func)(void *, void *, void *);
+typedef SECStatus (*pk11_op_func)(CK_SESSION_HANDLE, void *, void *, void *);
+
+typedef struct ThreadDataStr {
+    op_func op;
+    void *p1;
+    void *p2;
+    void *p3;
+    int iters;
+    PRLock *lock;
+    int count;
+    SECStatus status;
+    int isSign;
+} ThreadData;
+
+void
+PKCS11Thread(void *data)
+{
+    ThreadData *threadData = (ThreadData *)data;
+    pk11_op_func op = (pk11_op_func)threadData->op;
+    int iters = threadData->iters;
+    unsigned char sigData[256];
+    SECItem sig;
+    CK_SESSION_HANDLE session;
+    CK_RV crv;
+
+    threadData->status = SECSuccess;
+    threadData->count = 0;
+
+    /* get our thread's session */
+    PR_Lock(threadData->lock);
+    crv = NSC_OpenSession(1, CKF_SERIAL_SESSION, NULL, 0, &session);
+    PR_Unlock(threadData->lock);
+    if (crv != CKR_OK) {
+        return;
     }
+
+    if (threadData->isSign) {
+        sig.data = sigData;
+        sig.len = sizeof(sigData);
+        threadData->p2 = (void *)&sig;
+    }
+
+    while (iters--) {
+        threadData->status = (*op)(session, threadData->p1,
+                                   threadData->p2, threadData->p3);
+        if (threadData->status != SECSuccess) {
+            break;
+        }
+        threadData->count++;
+    }
+    return;
+}
+
+int main(int argc, char ** args){
+    SECStatus rv = SECSuccess;
 
     rv = RNG_RNGInit();
+    // if (rv != SECSuccess) {
+    //     fprintf(stderr, "fuck you\n");
+    //     SECU_PrintError("Error:", "RNG_RNGInit");
+    //     return -1;
+    // }
+    RNG_SystemInfoForRNG();
+
+    rv = SECOID_Init();
     if (rv != SECSuccess) {
-        SECU_PrintError("Error:", "RNG_RNGInit");
+        SECU_PrintError("Error:", "SECOID_Init");
         return -1;
     }
-    RNG_SystemInfoForRNG();
     
     PLArenaPool * arena = PORT_NewArena(NSS_FREEBL_DEFAULT_CHUNKSIZE);
     if(arena == NULL){
@@ -39,9 +104,14 @@ int main(){
 
     }
 
-    printf("testing %s\n", nist256name);
+    printf("testing 256\n");
     ECParams * ecParams = mb_get_ec_params(ECCurve_NIST_P256, arena);
-    fprintf(stderr, "got ecParams\n");
+    if(ecParams){
+        fprintf(stderr, "got ecparams\n");
+    } else {
+        fprintf(stderr, "get ecparams failed\n");
+    }
+
     ECPrivateKey *ecPriv = NULL;
     rv = EC_NewKey(ecParams, &ecPriv);
     if (rv != SECSuccess) {
@@ -51,32 +121,43 @@ int main(){
         fprintf(stderr, "EC_NewKey succeeded\n");
     }
 
-    printf("testing %s\n", nist384name);
+    printf("testing 384\n");
     ecParams = mb_get_ec_params(ECCurve_NIST_P384, arena);
     ecPriv = NULL;
     rv = EC_NewKey(ecParams, &ecPriv);
     if (rv != SECSuccess) {
         fprintf(stderr, "EC_NewKey failed\n");
         return 1;
+    } else {
+        printf("EC_NewKey succeeded\n");
     }
 
-    printf("testing %s\n", nist521name);
+    printf("testing 521\n");
     ecParams = mb_get_ec_params(ECCurve_NIST_P521, arena);
     ecPriv = NULL;
     rv = EC_NewKey(ecParams, &ecPriv);
     if (rv != SECSuccess) {
         fprintf(stderr, "EC_NewKey failed\n");
         return 1;
+    } else {
+        printf("succeeded\n");
     }
 
-    printf("testing %s\n", name25519);
+    printf("testing 25519\n");
     ecParams = mb_get_ec_params(ECCurve25519, arena);
     ecPriv = NULL;
     rv = EC_NewKey(ecParams, &ecPriv);
     if (rv != SECSuccess) {
         fprintf(stderr, "EC_NewKey failed\n");
         return 1;
+    } else {
+        printf("succeeded\n");
     }
 
-    return 0;
+    rv |= SECOID_Shutdown();
+    RNG_RNGShutdown();
+    if (rv != SECSuccess) {
+        printf("Error: exiting with error value\n");
+    }
+    return rv;
 }

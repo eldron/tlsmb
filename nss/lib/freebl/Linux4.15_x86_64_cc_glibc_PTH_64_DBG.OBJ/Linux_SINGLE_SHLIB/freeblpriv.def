@@ -17,6 +17,17 @@
 NSSprivate_3.11 {               # NSS 3.11 release
     global:
 FREEBL_GetVector;
+mp_init;
+mp_read_unsigned_octets;
+mp_set_int;
+mp_mul;
+mp_to_fixlen_octets;
+ec_Curve25519_pt_mul;
+ec_points_mul;
+mp_sub;
+mp_mod;
+mp_add;
+mp_clear;
     local:
        *;
 };

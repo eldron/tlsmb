@@ -4,6 +4,10 @@
         "ec.h": "c",
         "array": "c",
         "string_view": "c",
-        "typeinfo": "c"
+        "typeinfo": "c",
+        "stdio.h": "c",
+        "mpi.h": "c",
+        "stubs.h": "c",
+        "mb_ec_util.h": "c"
     }
 }

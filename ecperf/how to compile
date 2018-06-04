@@ -1,0 +1,6 @@
+1. modify /home/work/Documents/tlsmb/nss/lib/freebl/Linux4.15_x86_64_cc_glibc_PTH_64_DBG.OBJ/Linux_SINGLE_SHLIB/freeblpriv.def
+to modify local symbols to global symbols
+
+2. cd nss and make nss_build_all USE_64=1
+3. copy libfreeblpriv3.so
+4. make

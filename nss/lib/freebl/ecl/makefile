@@ -1,0 +1,9 @@
+INCLUDE_FREEBL_PATH=../
+INCLUDE_NSS_PATH=../../../../dist/public/nss/
+INCLUDE_DIST_PATH=../../../../dist/Linux4.15_x86_64_cc_glibc_PTH_64_DBG.OBJ/include/
+INCLUDE_MPI_PATH=../mpi/
+
+INCLUDE_PATHS=-I$(INCLUDE_FREEBL_PATH) -I$(INCLUDE_NSS_PATH) -I$(INCLUDE_DIST_PATH) -I$(INCLUDE_MPI_PATH)
+
+ecp_25519.o:ecp_25519.c
+	gcc $(INCLUDE_PATHS) -c ecp_25519.c
