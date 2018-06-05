@@ -39,16 +39,16 @@ extern SECStatus SECU_ecName2params(ECCurveName curve, SECItem *params);
 // alpha_bytes: alpha, of length len, the length on octets of the order buffer
 // prev_private_key_bytes: input a_{n}
 // returns: a_{n + 1}
-unsigned char *
+int
 fake_ec_GenerateRandomPrivateKey(ECParams * ecParams, unsigned char * alpha_bytes,
-    unsigned char * prev_private_key_bytes);
+    unsigned char * prev_private_key_bytes, unsigned char ** p_private_key, unsigned char ** p_public_key);
 
 // used by middlebox
 // calculate a_{n+1}=H(A_{n}^alpha)
 // alpha_bytes: alpha, of length len, the length in octets of the order buffer
 // returns: a_{n+1}
-unsigned char * generate_ec_private_key_for_middlebox(ECParams * ecParams, 
-    SECItem * A, unsigned char * alpha_bytes);
+int generate_ec_private_key_for_middlebox(ECParams * ecParams, 
+    SECItem * A, unsigned char * alpha_bytes, unsigned char ** p_private_key, unsigned char ** p_public_key);
 
 ECParams * mb_get_ec_params(ECCurveName curve, PLArenaPool * arena);
 #endif

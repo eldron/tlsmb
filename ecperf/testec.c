@@ -104,6 +104,10 @@ int main(int argc, char ** args){
 
     }
 
+    unsigned char * private_key;
+    unsigned char * public_key;
+    int i;
+
     printf("testing 256\n");
     ECParams * ecParams = mb_get_ec_params(ECCurve_NIST_P256, arena);
     if(ecParams){
@@ -121,7 +125,36 @@ int main(int argc, char ** args){
         fprintf(stderr, "EC_NewKey succeeded\n");
     }
 
-    printf("testing 384\n");
+    // test generate fake key for client
+    printf("testing generate fake key for client\n");
+    fake_ec_GenerateRandomPrivateKey(ecParams, 
+        NULL, ecPriv->privateValue.data, &private_key, &public_key);
+    printf("generated fake private key is:\n");
+    for(i = 0;i < ecPriv->privateValue.len;i++){
+        printf("%u ", private_key[i]);
+    }
+    printf("\ngenerated fake public key is:\n");
+    for(i = 0;i < ecPriv->publicValue.len;i++){
+        printf("%u ", public_key[i]);
+    }
+    printf("\n");
+
+    // test generate fake key for middlebox
+    printf("testing generate fake key for middlebox\n");
+    generate_ec_private_key_for_middlebox(ecParams, &(ecPriv->publicValue), NULL,
+        &private_key, &public_key);
+    
+    printf("generated fake private key is:\n");
+    for(i = 0;i < ecPriv->privateValue.len;i++){
+        printf("%u ", private_key[i]);
+    }
+    printf("\ngenerated fake public key is:\n");
+    for(i = 0;i < ecPriv->publicValue.len;i++){
+        printf("%u ", public_key[i]);
+    }
+    printf("\n");
+
+    printf("\ntesting 384\n");
     ecParams = mb_get_ec_params(ECCurve_NIST_P384, arena);
     ecPriv = NULL;
     rv = EC_NewKey(ecParams, &ecPriv);
@@ -131,6 +164,34 @@ int main(int argc, char ** args){
     } else {
         printf("EC_NewKey succeeded\n");
     }
+    // test generate fake key for client
+    printf("testing generate fake key for client\n");
+    fake_ec_GenerateRandomPrivateKey(ecParams, 
+        NULL, ecPriv->privateValue.data, &private_key, &public_key);
+    printf("generated fake private key is:\n");
+    for(i = 0;i < ecPriv->privateValue.len;i++){
+        printf("%u ", private_key[i]);
+    }
+    printf("\ngenerated fake public key is:\n");
+    for(i = 0;i < ecPriv->publicValue.len;i++){
+        printf("%u ", public_key[i]);
+    }
+    printf("\n");
+
+    // test generate fake key for middlebox
+    printf("testing generate fake key for middlebox\n");
+    generate_ec_private_key_for_middlebox(ecParams, &(ecPriv->publicValue), NULL,
+        &private_key, &public_key);
+    
+    printf("generated fake private key is:\n");
+    for(i = 0;i < ecPriv->privateValue.len;i++){
+        printf("%u ", private_key[i]);
+    }
+    printf("\ngenerated fake public key is:\n");
+    for(i = 0;i < ecPriv->publicValue.len;i++){
+        printf("%u ", public_key[i]);
+    }
+    printf("\n");
 
     printf("testing 521\n");
     ecParams = mb_get_ec_params(ECCurve_NIST_P521, arena);
@@ -142,6 +203,34 @@ int main(int argc, char ** args){
     } else {
         printf("succeeded\n");
     }
+    // test generate fake key for client
+    printf("testing generate fake key for client\n");
+    fake_ec_GenerateRandomPrivateKey(ecParams, 
+        NULL, ecPriv->privateValue.data, &private_key, &public_key);
+    printf("generated fake private key is:\n");
+    for(i = 0;i < ecPriv->privateValue.len;i++){
+        printf("%u ", private_key[i]);
+    }
+    printf("\ngenerated fake public key is:\n");
+    for(i = 0;i < ecPriv->publicValue.len;i++){
+        printf("%u ", public_key[i]);
+    }
+    printf("\n");
+
+    // test generate fake key for middlebox
+    printf("testing generate fake key for middlebox\n");
+    generate_ec_private_key_for_middlebox(ecParams, &(ecPriv->publicValue), NULL,
+        &private_key, &public_key);
+    
+    printf("generated fake private key is:\n");
+    for(i = 0;i < ecPriv->privateValue.len;i++){
+        printf("%u ", private_key[i]);
+    }
+    printf("\ngenerated fake public key is:\n");
+    for(i = 0;i < ecPriv->publicValue.len;i++){
+        printf("%u ", public_key[i]);
+    }
+    printf("\n");
 
     printf("testing 25519\n");
     ecParams = mb_get_ec_params(ECCurve25519, arena);
@@ -153,7 +242,35 @@ int main(int argc, char ** args){
     } else {
         printf("succeeded\n");
     }
+    // test generate fake key for client
+    printf("testing generate fake key for client\n");
+    fake_ec_GenerateRandomPrivateKey(ecParams, 
+        NULL, ecPriv->privateValue.data, &private_key, &public_key);
+    printf("generated fake private key is:\n");
+    for(i = 0;i < ecPriv->privateValue.len;i++){
+        printf("%u ", private_key[i]);
+    }
+    printf("\ngenerated fake public key is:\n");
+    for(i = 0;i < ecPriv->publicValue.len;i++){
+        printf("%u ", public_key[i]);
+    }
+    printf("\n");
 
+    // test generate fake key for middlebox
+    printf("testing generate fake key for middlebox\n");
+    generate_ec_private_key_for_middlebox(ecParams, &(ecPriv->publicValue), NULL,
+        &private_key, &public_key);
+    
+    printf("generated fake private key is:\n");
+    for(i = 0;i < ecPriv->privateValue.len;i++){
+        printf("%u ", private_key[i]);
+    }
+    printf("\ngenerated fake public key is:\n");
+    for(i = 0;i < ecPriv->publicValue.len;i++){
+        printf("%u ", public_key[i]);
+    }
+    printf("\n");
+    
     rv |= SECOID_Shutdown();
     RNG_RNGShutdown();
     if (rv != SECSuccess) {

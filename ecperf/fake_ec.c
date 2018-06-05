@@ -8,7 +8,7 @@ extern mp_err mp_init(mp_int *mp);
 
 #define MB_CHECK_MPI_OK(func)      \
     if (MP_OKAY > (err = func)) \
-    return NULL
+    return 0
 
 /*
  * Computes scalar point multiplication pointQ = k1 * G + k2 * pointP for
@@ -34,9 +34,11 @@ extern mp_err mp_init(mp_int *mp);
 // alpha_bytes: alpha, of length len, the length on octets of the order buffer
 // prev_private_key_bytes: input a_{n}
 // returns: a_{n + 1}
-unsigned char *
+// return 1 if success, return 0 else
+// caller is responsible for free private key and public key
+int
 fake_ec_GenerateRandomPrivateKey(ECParams * ecParams, unsigned char * alpha_bytes,
-    unsigned char * prev_private_key_bytes)
+    unsigned char * prev_private_key_bytes, unsigned char ** p_private_key, unsigned char ** p_public_key)
 {
     unsigned char * order = ecParams->order.data;
     int len = ecParams->order.len;
@@ -51,7 +53,10 @@ fake_ec_GenerateRandomPrivateKey(ECParams * ecParams, unsigned char * alpha_byte
     MP_DIGITS(&one) = 0;
     MB_CHECK_MPI_OK(mp_init(&privKeyVal));
     MB_CHECK_MPI_OK(mp_init(&order_1));
-    MB_CHECK_MPI_OK(mp_init(&one));
+    //MB_CHECK_MPI_OK(mp_init(&one));
+    MB_CHECK_MPI_OK(mp_read_unsigned_octets(&order_1, order, len));
+    //MB_CHECK_MPI_OK(mp_set_int(&one, 1));
+    //MB_CHECK_MPI_OK(mp_sub(&order_1, &one, &order_1));
 
     /* Generates 2*len random bytes using the global random bit generator
      * (which implements Algorithm 1 of FIPS 186-2 Change Notice 1) then
@@ -59,7 +64,7 @@ fake_ec_GenerateRandomPrivateKey(ECParams * ecParams, unsigned char * alpha_byte
      */
     if ((privKeyBytes = PORT_Alloc(2 * len)) == NULL){
         fprintf(stderr, "can not allocate privKeyBytes\n");
-        return NULL;
+        return 0;
     }
     //CHECK_SEC_OK(RNG_GenerateGlobalRandomBytes(privKeyBytes, 2 * len));
 
@@ -68,21 +73,28 @@ fake_ec_GenerateRandomPrivateKey(ECParams * ecParams, unsigned char * alpha_byte
     mp_int prev_private_key_value;
     MB_CHECK_MPI_OK(mp_init(&alpha_value));
     MB_CHECK_MPI_OK(mp_init(&prev_private_key_value));
+    mp_read_unsigned_octets(&prev_private_key_value, prev_private_key_bytes, len);
     if(alpha_bytes){
         mp_read_unsigned_octets(&alpha_value, alpha_bytes, len);
     } else {
         mp_set_int(&alpha_value, 2);
     }
     MB_CHECK_MPI_OK(mp_mul(&alpha_value, &prev_private_key_value, &alpha_value));
+    MB_CHECK_MPI_OK(mp_mod(&alpha_value, &order_1, &alpha_value));
+
+    fprintf(stderr, "alpha * prev_private_key_value calculated\n");
 
     SECItem alpha_item;// use this for calculation
     alpha_item.len = len;
     alpha_item.data = PORT_Alloc(len);
     if(alpha_item.data == NULL){
         fprintf(stderr, "failed to alloc mem for alpha_item\n");
-        return NULL;
+        return 0;
     }
     MB_CHECK_MPI_OK(mp_to_fixlen_octets(&alpha_value, alpha_item.data, len));
+    //MB_CHECK_MPI_OK(mp_add(&alpha_value, &one, &alpha_value));// maybe this should be sub
+
+    fprintf(stderr, "alpha_item set\n");
 
     SECItem pubkey;
     if(ecParams->name == ECCurve25519){
@@ -90,15 +102,17 @@ fake_ec_GenerateRandomPrivateKey(ECParams * ecParams, unsigned char * alpha_byte
         pubkey.data = PORT_Alloc(pubkey.len);
         if(pubkey.data == NULL){
             fprintf(stderr, "failed to alloc memory for pubkey.data\n");
-            return NULL;
+            return 0;
         }
 
-        PRUint8 basePoint[32] = { 9 };
-        SECItem basepoint_item;
-        basepoint_item.len = 32;
-        basepoint_item.data = basePoint;
+        // PRUint8 basePoint[32] = { 9 };
+        // SECItem basepoint_item;
+        // basepoint_item.len = 32;
+        // basepoint_item.data = basePoint;
 
-        ec_Curve25519_pt_mul(&pubkey, &alpha_item, &basepoint_item);
+        fprintf(stderr, "before 25519 mul\n");
+        ec_Curve25519_pt_mul(&pubkey, &alpha_item, NULL);// use the base point to calculate
+        fprintf(stderr, "after 25519 mul\n");
     } else if(ecParams->name == ECCurve_NIST_P256 ||
         ecParams->name == ECCurve_NIST_P384 ||
         ecParams->name == ECCurve_NIST_P521){
@@ -107,12 +121,14 @@ fake_ec_GenerateRandomPrivateKey(ECParams * ecParams, unsigned char * alpha_byte
         pubkey.data = PORT_Alloc(pubkey.len);
         if(pubkey.data == NULL){
             fprintf(stderr, "could not alloc mem for pubkey.data\n");
-            return NULL;
+            return 0;
         }
 
         ec_points_mul(ecParams, &alpha_value, NULL, NULL, &pubkey);
     }
     
+    fprintf(stderr, "g^alpha calculated\n");
+
     // hash pubkey to get a_{n+1}, 
     // we should only hash the corresponding part in the packet
     unsigned char sha512_hash_bytes[SHA512_LENGTH];
@@ -129,7 +145,7 @@ fake_ec_GenerateRandomPrivateKey(ECParams * ecParams, unsigned char * alpha_byte
         SHA512_HashBuf(sha512_hash_bytes, pubkey.data, pubkey.len);
     } else {
         fprintf(stderr, "unsupported curve name\n");
-        return NULL;
+        return 0;
     }
     // feed hash bytes into privKeyBytes
     int tmp_len = 2 * len;
@@ -144,27 +160,64 @@ fake_ec_GenerateRandomPrivateKey(ECParams * ecParams, unsigned char * alpha_byte
     }
 
     MB_CHECK_MPI_OK(mp_read_unsigned_octets(&privKeyVal, privKeyBytes, 2 * len));
-    MB_CHECK_MPI_OK(mp_read_unsigned_octets(&order_1, order, len));
-    MB_CHECK_MPI_OK(mp_set_int(&one, 1));
-    MB_CHECK_MPI_OK(mp_sub(&order_1, &one, &order_1));
+    
     MB_CHECK_MPI_OK(mp_mod(&privKeyVal, &order_1, &privKeyVal));
-    MB_CHECK_MPI_OK(mp_add(&privKeyVal, &one, &privKeyVal));
+    //MB_CHECK_MPI_OK(mp_add(&privKeyVal, &one, &privKeyVal));
     MB_CHECK_MPI_OK(mp_to_fixlen_octets(&privKeyVal, privKeyBytes, len));
     memset(privKeyBytes + len, 0, len);// outside functions should use privKeyBytes as an array of length len
+
+    *p_private_key = privKeyBytes;
+    // calculate the corresponding public key
+    if(ecParams->name == ECCurve25519){
+        SECItem pubitem;
+        pubitem.len = 32;
+        pubitem.data = PORT_Alloc(32);
+        if(pubitem.data == NULL){
+            fprintf(stderr, "alloc mem for pubitem failed\n");
+        }
+
+        SECItem privitem;// for calculation
+        privitem.len = len;
+        privitem.data = privKeyBytes;
+        ec_Curve25519_pt_mul(&pubitem, &privitem, NULL);// use base point to calculate
+        *p_public_key = pubitem.data;
+    } else if(ecParams->name == ECCurve_NIST_P256 ||
+        ecParams->name == ECCurve_NIST_P384 ||
+        ecParams->name == ECCurve_NIST_P521){
+
+        SECItem pubitem;
+        pubitem.len = ((ecParams->fieldID.size + 7) >> 3) * 2 + 1;
+        pubitem.data = PORT_Alloc(pubitem.len);
+        if(pubitem.data == NULL){
+            fprintf(stderr, "alloc mem for pubitem failed\n");
+            return 0;
+        }
+
+        ec_points_mul(ecParams, &privKeyVal, NULL, NULL, &pubitem);
+        unsigned char * tmp = (unsigned char *) pubitem.data;
+        *tmp = 4;// legacy form
+
+        *p_public_key = pubitem.data;
+    } else {
+        fprintf(stderr, "generate_ec_private_key_for_middlebox: unexpected curve name\n");
+    }
 
     mp_clear(&privKeyVal);
     mp_clear(&order_1);
     mp_clear(&one);
 
-    return privKeyBytes;
+    return 1;
 }
 
 // used by middlebox
 // calculate a_{n+1}=H(A_{n}^alpha)
 // alpha_bytes: alpha, of length len, the length in octets of the order buffer
 // returns: a_{n+1}
-unsigned char * generate_ec_private_key_for_middlebox(ECParams * ecParams, 
-    SECItem * A, unsigned char * alpha_bytes){
+// return 1 if success, return 0 else
+// caller is reponsible for free private key and public key
+int generate_ec_private_key_for_middlebox(ECParams * ecParams, 
+    SECItem * A, unsigned char * alpha_bytes, unsigned char ** p_private_key,
+    unsigned char ** p_public_key){
 
     unsigned char * order = ecParams->order.data;
     int len = ecParams->order.len;
@@ -177,11 +230,11 @@ unsigned char * generate_ec_private_key_for_middlebox(ECParams * ecParams,
     MP_DIGITS(&one) = 0;
     MB_CHECK_MPI_OK(mp_init(&privKeyVal));
     MB_CHECK_MPI_OK(mp_init(&order_1));
-    MB_CHECK_MPI_OK(mp_init(&one));
+    //MB_CHECK_MPI_OK(mp_init(&one));
 
     if ((privKeyBytes = PORT_Alloc(2 * len)) == NULL){
         fprintf(stderr, "can not allocate privKeyBytes\n");
-        return NULL;
+        return 0;
     }
 
     mp_int alpha_value;
@@ -199,7 +252,7 @@ unsigned char * generate_ec_private_key_for_middlebox(ECParams * ecParams,
     alpha_item.data = PORT_Alloc(len);
     if(alpha_item.data == NULL){
         fprintf(stderr, "failed alloc memory for alpha_item\n");
-        return NULL;
+        return 0;
     }
     if(alpha_bytes){
         memcpy(alpha_item.data, alpha_bytes, len);
@@ -214,10 +267,10 @@ unsigned char * generate_ec_private_key_for_middlebox(ECParams * ecParams,
         result.data = PORT_Alloc(result.len);
         if(result.data == NULL){
             fprintf(stderr, "failed to alloc memeory for result\n");
-            return NULL;
+            return 0;
         }
 
-        ec_Curve25519_pt_mul(&result, &alpha_item, A);
+        ec_Curve25519_pt_mul(&result, &alpha_item, A);// use A to calculate
     } else if(ecParams->name == ECCurve_NIST_P256
         || ecParams->name == ECCurve_NIST_P384
         || ecParams->name == ECCurve_NIST_P521){
@@ -226,13 +279,16 @@ unsigned char * generate_ec_private_key_for_middlebox(ECParams * ecParams,
         result.data = PORT_Alloc(result.len);
         if(result.data == NULL){
             fprintf(stderr, "alloc memory for result failed\n");
-            return NULL;
+            return 0;
         }
 
         ec_points_mul(ecParams, NULL, &alpha_value, A, &result);
 
         unsigned char * tmp = (unsigned char *) result.data;
         *tmp = 4;// legacy form
+    } else {
+        fprintf(stderr, "generate_ec_private_key_for_middlebox: error unexpected curve type\n");
+        return 0;
     }
 
     unsigned char sha512_hash_bytes[SHA512_LENGTH];
@@ -251,18 +307,53 @@ unsigned char * generate_ec_private_key_for_middlebox(ECParams * ecParams,
 
     MB_CHECK_MPI_OK(mp_read_unsigned_octets(&privKeyVal, privKeyBytes, 2 * len));
     MB_CHECK_MPI_OK(mp_read_unsigned_octets(&order_1, order, len));
-    MB_CHECK_MPI_OK(mp_set_int(&one, 1));
-    MB_CHECK_MPI_OK(mp_sub(&order_1, &one, &order_1));
+    //MB_CHECK_MPI_OK(mp_set_int(&one, 1));
+    //MB_CHECK_MPI_OK(mp_sub(&order_1, &one, &order_1));
     MB_CHECK_MPI_OK(mp_mod(&privKeyVal, &order_1, &privKeyVal));
-    MB_CHECK_MPI_OK(mp_add(&privKeyVal, &one, &privKeyVal));
+    //MB_CHECK_MPI_OK(mp_add(&privKeyVal, &one, &privKeyVal));
     MB_CHECK_MPI_OK(mp_to_fixlen_octets(&privKeyVal, privKeyBytes, len));
     memset(privKeyBytes + len, 0, len);// outside functions should use privKeyBytes as an array of length len
+
+    *p_private_key = privKeyBytes;
+    // calculate the corresponding public key
+    if(ecParams->name == ECCurve25519){
+        SECItem pubitem;
+        pubitem.len = 32;
+        pubitem.data = PORT_Alloc(32);
+        if(pubitem.data == NULL){
+            fprintf(stderr, "alloc mem for pubitem failed\n");
+        }
+
+        SECItem privitem;// for calculation
+        privitem.len = len;
+        privitem.data = privKeyBytes;
+        ec_Curve25519_pt_mul(&pubitem, &privitem, NULL);// use base point to calculate
+        *p_public_key = pubitem.data;
+    } else if(ecParams->name == ECCurve_NIST_P256 ||
+        ecParams->name == ECCurve_NIST_P384 ||
+        ecParams->name == ECCurve_NIST_P521){
+
+        SECItem pubitem;
+        pubitem.len = ((ecParams->fieldID.size + 7) >> 3) * 2 + 1;
+        pubitem.data = PORT_Alloc(pubitem.len);
+        if(pubitem.data == NULL){
+            fprintf(stderr, "alloc mem for pubitem failed\n");
+            return 0;
+        }
+
+        ec_points_mul(ecParams, &privKeyVal, NULL, NULL, &pubitem);
+        unsigned char * tmp = (unsigned char *) pubitem.data;
+        *tmp = 4;// legacy form
+
+        *p_public_key = pubitem.data;
+    } else {
+        fprintf(stderr, "generate_ec_private_key_for_middlebox: unexpected curve name\n");
+    }
 
     mp_clear(&privKeyVal);
     mp_clear(&order_1);
     mp_clear(&one);
-
-    return privKeyBytes;
+    return 1;
 }
 
 ECParams * mb_get_ec_params(ECCurveName curve, PLArenaPool * arena){
