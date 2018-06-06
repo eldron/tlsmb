@@ -6,6 +6,7 @@
 #include "pkcs11.h"
 #include "nspr.h"
 #include <stdio.h>
+#include <dlfcn.h>
 
 #include "mb_ec_util.h"
 
@@ -80,14 +81,47 @@ PKCS11Thread(void *data)
 }
 
 int main(int argc, char ** args){
+    void * handle = NULL;
+    char * error_string;
+    handle = dlopen("libecutil.so", RTLD_LAZY);
+    if(handle == NULL){
+        fprintf(stderr, "dl open libecutil.so failed\n");
+        return 1;
+    }
+    ECParams * (*func_mbgetecparams)(ECCurveName, PLArenaPool *);
+    int (*func_fakeecgenprivatekey)(ECParams *, unsigned char *,
+        unsigned char *, unsigned char ** , unsigned char ** );
+    int(*func_genkeyformiddlebox)(ECParams *, SECItem *, unsigned char *, unsigned char **, unsigned char **);
+    
+    func_mbgetecparams = dlsym(handle, "mb_get_ec_params");
+    if((error_string = dlerror()) != NULL){
+        fprintf(stderr, "load function mb_get_ec_params failed\n");
+    } else {
+        fprintf(stderr, "laod function mb_get_ec_params succeeded\n");
+    }
+
+    func_fakeecgenprivatekey = dlsym(handle, "fake_ec_GenerateRandomPrivateKey");
+    if((error_string = dlerror()) != NULL){
+        fprintf(stderr, "load function fake_ec_GenerateRandomPrivateKey failede\n");
+    } else {
+        fprintf(stderr, "laod fake_ec_GenerateRandomPrivateKey succeeded\n");
+    }
+
+    func_genkeyformiddlebox = dlsym(handle, "generate_ec_private_key_for_middlebox");
+    if((error_string = dlerror()) != NULL){
+        fprintf(stderr, "load generate_ec_private_key_for_middlebox failed\n");
+    } else {
+        fprintf(stderr, "load generate_ec_private_key_for_middlebox succeeded\n");
+    }
+
     SECStatus rv = SECSuccess;
 
     rv = RNG_RNGInit();
-    // if (rv != SECSuccess) {
-    //     fprintf(stderr, "fuck you\n");
-    //     SECU_PrintError("Error:", "RNG_RNGInit");
-    //     return -1;
-    // }
+    if (rv != SECSuccess) {
+        fprintf(stderr, "fuck you\n");
+        SECU_PrintError("Error:", "RNG_RNGInit");
+        return -1;
+    }
     RNG_SystemInfoForRNG();
 
     rv = SECOID_Init();
@@ -109,7 +143,8 @@ int main(int argc, char ** args){
     int i;
 
     printf("testing 256\n");
-    ECParams * ecParams = mb_get_ec_params(ECCurve_NIST_P256, arena);
+    //ECParams * ecParams = mb_get_ec_params(ECCurve_NIST_P256, arena);
+    ECParams * ecParams = func_mbgetecparams(ECCurve_NIST_P256, arena);
     if(ecParams){
         fprintf(stderr, "got ecparams\n");
     } else {
@@ -127,8 +162,9 @@ int main(int argc, char ** args){
 
     // test generate fake key for client
     printf("testing generate fake key for client\n");
-    fake_ec_GenerateRandomPrivateKey(ecParams, 
-        NULL, ecPriv->privateValue.data, &private_key, &public_key);
+    //fake_ec_GenerateRandomPrivateKey(ecParams, NULL, ecPriv->privateValue.data, &private_key, &public_key);
+    func_fakeecgenprivatekey(ecParams, NULL, ecPriv->privateValue.data, &private_key, &public_key);
+
     printf("generated fake private key is:\n");
     for(i = 0;i < ecPriv->privateValue.len;i++){
         printf("%u ", private_key[i]);
@@ -141,9 +177,9 @@ int main(int argc, char ** args){
 
     // test generate fake key for middlebox
     printf("testing generate fake key for middlebox\n");
-    generate_ec_private_key_for_middlebox(ecParams, &(ecPriv->publicValue), NULL,
-        &private_key, &public_key);
-    
+    //generate_ec_private_key_for_middlebox(ecParams, &(ecPriv->publicValue), NULL, &private_key, &public_key);
+    func_genkeyformiddlebox(ecParams, &(ecPriv->publicValue), NULL, &private_key, &public_key);
+
     printf("generated fake private key is:\n");
     for(i = 0;i < ecPriv->privateValue.len;i++){
         printf("%u ", private_key[i]);
@@ -155,7 +191,8 @@ int main(int argc, char ** args){
     printf("\n");
 
     printf("\ntesting 384\n");
-    ecParams = mb_get_ec_params(ECCurve_NIST_P384, arena);
+    //ecParams = mb_get_ec_params(ECCurve_NIST_P384, arena);
+    ecParams = func_mbgetecparams(ECCurve_NIST_P384, arena);
     ecPriv = NULL;
     rv = EC_NewKey(ecParams, &ecPriv);
     if (rv != SECSuccess) {
@@ -166,8 +203,9 @@ int main(int argc, char ** args){
     }
     // test generate fake key for client
     printf("testing generate fake key for client\n");
-    fake_ec_GenerateRandomPrivateKey(ecParams, 
-        NULL, ecPriv->privateValue.data, &private_key, &public_key);
+    //fake_ec_GenerateRandomPrivateKey(ecParams, NULL, ecPriv->privateValue.data, &private_key, &public_key);
+    func_fakeecgenprivatekey(ecParams, NULL, ecPriv->privateValue.data, &private_key, &public_key);
+
     printf("generated fake private key is:\n");
     for(i = 0;i < ecPriv->privateValue.len;i++){
         printf("%u ", private_key[i]);
@@ -180,9 +218,9 @@ int main(int argc, char ** args){
 
     // test generate fake key for middlebox
     printf("testing generate fake key for middlebox\n");
-    generate_ec_private_key_for_middlebox(ecParams, &(ecPriv->publicValue), NULL,
-        &private_key, &public_key);
-    
+    //generate_ec_private_key_for_middlebox(ecParams, &(ecPriv->publicValue), NULL, &private_key, &public_key);
+    func_genkeyformiddlebox(ecParams, &(ecPriv->publicValue), NULL, &private_key, &public_key);
+
     printf("generated fake private key is:\n");
     for(i = 0;i < ecPriv->privateValue.len;i++){
         printf("%u ", private_key[i]);
@@ -194,7 +232,9 @@ int main(int argc, char ** args){
     printf("\n");
 
     printf("testing 521\n");
-    ecParams = mb_get_ec_params(ECCurve_NIST_P521, arena);
+    //ecParams = mb_get_ec_params(ECCurve_NIST_P521, arena);
+    ecParams = func_mbgetecparams(ECCurve_NIST_P521, arena);
+
     ecPriv = NULL;
     rv = EC_NewKey(ecParams, &ecPriv);
     if (rv != SECSuccess) {
@@ -205,8 +245,9 @@ int main(int argc, char ** args){
     }
     // test generate fake key for client
     printf("testing generate fake key for client\n");
-    fake_ec_GenerateRandomPrivateKey(ecParams, 
-        NULL, ecPriv->privateValue.data, &private_key, &public_key);
+    //fake_ec_GenerateRandomPrivateKey(ecParams, NULL, ecPriv->privateValue.data, &private_key, &public_key);
+    func_fakeecgenprivatekey(ecParams, NULL, ecPriv->privateValue.data, &private_key, &public_key);
+    
     printf("generated fake private key is:\n");
     for(i = 0;i < ecPriv->privateValue.len;i++){
         printf("%u ", private_key[i]);
@@ -219,8 +260,8 @@ int main(int argc, char ** args){
 
     // test generate fake key for middlebox
     printf("testing generate fake key for middlebox\n");
-    generate_ec_private_key_for_middlebox(ecParams, &(ecPriv->publicValue), NULL,
-        &private_key, &public_key);
+    //generate_ec_private_key_for_middlebox(ecParams, &(ecPriv->publicValue), NULL, &private_key, &public_key);
+    func_genkeyformiddlebox(ecParams, &(ecPriv->publicValue), NULL, &private_key, &public_key);
     
     printf("generated fake private key is:\n");
     for(i = 0;i < ecPriv->privateValue.len;i++){
@@ -233,7 +274,8 @@ int main(int argc, char ** args){
     printf("\n");
 
     printf("testing 25519\n");
-    ecParams = mb_get_ec_params(ECCurve25519, arena);
+    //ecParams = mb_get_ec_params(ECCurve25519, arena);
+    ecParams = func_mbgetecparams(ECCurve25519, arena);
     ecPriv = NULL;
     rv = EC_NewKey(ecParams, &ecPriv);
     if (rv != SECSuccess) {
@@ -244,8 +286,9 @@ int main(int argc, char ** args){
     }
     // test generate fake key for client
     printf("testing generate fake key for client\n");
-    fake_ec_GenerateRandomPrivateKey(ecParams, 
-        NULL, ecPriv->privateValue.data, &private_key, &public_key);
+    //fake_ec_GenerateRandomPrivateKey(ecParams, NULL, ecPriv->privateValue.data, &private_key, &public_key);
+    func_fakeecgenprivatekey(ecParams, NULL, ecPriv->privateValue.data, &private_key, &public_key);
+
     printf("generated fake private key is:\n");
     for(i = 0;i < ecPriv->privateValue.len;i++){
         printf("%u ", private_key[i]);
@@ -258,8 +301,8 @@ int main(int argc, char ** args){
 
     // test generate fake key for middlebox
     printf("testing generate fake key for middlebox\n");
-    generate_ec_private_key_for_middlebox(ecParams, &(ecPriv->publicValue), NULL,
-        &private_key, &public_key);
+    //generate_ec_private_key_for_middlebox(ecParams, &(ecPriv->publicValue), NULL, &private_key, &public_key);
+    func_genkeyformiddlebox(ecParams, &(ecPriv->publicValue), NULL, &private_key, &public_key);
     
     printf("generated fake private key is:\n");
     for(i = 0;i < ecPriv->privateValue.len;i++){
@@ -270,6 +313,8 @@ int main(int argc, char ** args){
         printf("%u ", public_key[i]);
     }
     printf("\n");
+    
+    printf("test ld libecutil.so succeeded\n");
     
     rv |= SECOID_Shutdown();
     RNG_RNGShutdown();

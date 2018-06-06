@@ -17,7 +17,7 @@ MB_LD_STATIC_LIBRARIES=-lcertdb -lcerthi -lcpputil -lcrmf -lcryptohi -ldbm  -lgt
 
 LD_SYSTEM_LIBRARIES=-lpthread -lm -ldl
 
-all:ecperf testec
+all:ecperf testec libecutil.so
 	echo "built all"
 
 ecperf:ecperf.o fake_ec.o
@@ -27,15 +27,18 @@ testec:testec.o fake_ec.o
 	gcc $(LD_PATHS) -o testec testec.o fake_ec.o $(LD_STATIC_LIBRARIES) $(LD_DYNAMIC_LIBRARIES) -lfreeblpriv3 $(LD_SYSTEM_LIBRARIES)
 
 ecperf.o:ecperf.c
-	gcc $(INCLUDE_PATHS) -c ecperf.c
+	gcc $(INCLUDE_PATHS) -Wall -fpic -c ecperf.c
 
 testec.o:testec.c
-	gcc $(INCLUDE_PATHS) -c testec.c
+	gcc $(INCLUDE_PATHS) -Wall -fpic -c testec.c
 
 fake_ec.o:fake_ec.c
-	gcc $(INCLUDE_PATHS) -c fake_ec.c
+	gcc $(INCLUDE_PATHS) -Wall -fpic -c fake_ec.c
 
+libecutil.so:
+	gcc $(LD_PATHS) -shared -o libecutil.so fake_ec.o $(LD_STATIC_LIBRARIES) $(LD_DYNAMIC_LIBRARIES) -lfreeblpriv3 $(LD_SYSTEM_LIBRARIES)
 clean:
 	rm -f ecperf
 	rm -f testec
 	rm *.o
+	rm libecutil.so
