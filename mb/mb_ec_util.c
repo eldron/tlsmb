@@ -74,13 +74,23 @@ fake_ec_GenerateRandomPrivateKey(ECParams * ecParams, unsigned char * alpha_byte
     MB_CHECK_MPI_OK(mp_init(&alpha_value));
     MB_CHECK_MPI_OK(mp_init(&prev_private_key_value));
     mp_read_unsigned_octets(&prev_private_key_value, prev_private_key_bytes, len);
+    SECItem previtem;
+    previtem.len = len;
+    previtem.data = prev_private_key_bytes;
+
     if(alpha_bytes){
         mp_read_unsigned_octets(&alpha_value, alpha_bytes, len);
     } else {
         mp_set_int(&alpha_value, 2);
     }
-    MB_CHECK_MPI_OK(mp_mul(&alpha_value, &prev_private_key_value, &alpha_value));
-    MB_CHECK_MPI_OK(mp_mod(&alpha_value, &order_1, &alpha_value));
+
+    if(ecParams->name == ECCurve_NIST_P256||
+        ecParams->name == ECCurve_NIST_P384 ||
+        ecParams->name == ECCurve_NIST_P521){
+
+        MB_CHECK_MPI_OK(mp_mul(&alpha_value, &prev_private_key_value, &alpha_value));
+        MB_CHECK_MPI_OK(mp_mod(&alpha_value, &order_1, &alpha_value));
+    }
 
     fprintf(stderr, "alpha * prev_private_key_value calculated\n");
 
@@ -94,7 +104,7 @@ fake_ec_GenerateRandomPrivateKey(ECParams * ecParams, unsigned char * alpha_byte
     MB_CHECK_MPI_OK(mp_to_fixlen_octets(&alpha_value, alpha_item.data, len));
     //MB_CHECK_MPI_OK(mp_add(&alpha_value, &one, &alpha_value));// maybe this should be sub
 
-    fprintf(stderr, "alpha_item set\n");
+    //fprintf(stderr, "alpha_item set\n");
 
     SECItem pubkey;
     if(ecParams->name == ECCurve25519){
@@ -105,14 +115,15 @@ fake_ec_GenerateRandomPrivateKey(ECParams * ecParams, unsigned char * alpha_byte
             return 0;
         }
 
-        // PRUint8 basePoint[32] = { 9 };
-        // SECItem basepoint_item;
-        // basepoint_item.len = 32;
-        // basepoint_item.data = basePoint;
-
-        fprintf(stderr, "before 25519 mul\n");
-        ec_Curve25519_pt_mul(&pubkey, &alpha_item, NULL);// use the base point to calculate
-        fprintf(stderr, "after 25519 mul\n");
+        ec_Curve25519_pt_mul(&pubkey, &previtem, NULL);// g^prev
+        ec_Curve25519_pt_mul(&pubkey, &alpha_item, &pubkey);// g^prev^alpha
+        //fprintf(stderr, "after 25519 mul\n");
+        // fprintf(stderr, "gen key for client: pubkey.len = %u\n", pubkey.len);
+        // int i;
+        // for(i = 0;i < pubkey.len;i++){
+        //     fprintf(stderr, "%u ", pubkey.data[i]);
+        // }
+        // fprintf(stderr, "\n");
     } else if(ecParams->name == ECCurve_NIST_P256 ||
         ecParams->name == ECCurve_NIST_P384 ||
         ecParams->name == ECCurve_NIST_P521){
@@ -271,6 +282,12 @@ int generate_ec_private_key_for_middlebox(ECParams * ecParams,
         }
 
         ec_Curve25519_pt_mul(&result, &alpha_item, A);// use A to calculate
+        // fprintf(stderr, "gen key for middlebox: result.len = %u\n", result.len);
+        // int i;
+        // for(i = 0;i < result.len;i++){
+        //     fprintf(stderr, "%u ", result.data[i]);
+        // }
+        // fprintf(stderr, "\n\n");
     } else if(ecParams->name == ECCurve_NIST_P256
         || ecParams->name == ECCurve_NIST_P384
         || ecParams->name == ECCurve_NIST_P521){

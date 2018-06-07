@@ -80,6 +80,7 @@ PKCS11Thread(void *data)
     return;
 }
 
+
 int main(int argc, char ** args){
     void * handle = NULL;
     char * error_string;
@@ -315,7 +316,89 @@ int main(int argc, char ** args){
     printf("\n");
     
     printf("test ld libecutil.so succeeded\n");
-    
+/*
+    fprintf(stderr, "test x25519\n");
+    ecParams = func_mbgetecparams(ECCurve25519, arena);
+    ECPrivateKey * priv1 = NULL;
+    ECPrivateKey * priv2 = NULL;
+    SECItem derivedItem;
+    //unsigned char derived_data[32];
+    //derivedItem.len = 32;
+    //derivedItem.data = derived_data;
+    EC_NewKey(ecParams, &priv1);
+    EC_NewKey(ecParams, &priv2);
+    ECDH_Derive(&(priv1->publicValue), ecParams,
+            &(priv2->privateValue),
+            0,
+            &derivedItem);
+    for(i = 0;i < 32; i++){
+        fprintf(stderr, "%u ", derivedItem.data[i]);
+    }
+    fprintf(stderr, "\n");
+
+    //unsigned char derived_data2[32];
+    SECItem derivedItem2;
+    //derivedItem2.data = derived_data2;
+    ECDH_Derive(&(priv2->publicValue), ecParams, &(priv1->privateValue), 0, &derivedItem2);
+    for(i = 0;i < 32; i++){
+        fprintf(stderr, "%u ", derivedItem2.data[i]);
+    }
+    fprintf(stderr, "\n");
+
+    mp_int privKeyVal, order_1, alpha_value;
+    MP_DIGITS(&privKeyVal) = 0;
+    MP_DIGITS(&order_1) = 0;
+    MP_DIGITS(&alpha_value) = 0;
+    mp_init(&privKeyVal);
+    mp_init(&order_1);
+    mp_init(&alpha_value);
+    mp_read_unsigned_octets(&order_1, ecParams->order.data, ecParams->order.len);
+    mp_read_unsigned_octets(&privKeyVal, priv1->privateValue.data, priv1->privateValue.len);
+    mp_set_int(&alpha_value, 2);
+    SECItem alpha_item;
+    alpha_item.len = ecParams->order.len;
+    alpha_item.data = (unsigned char *) malloc(alpha_item.len);
+    mp_to_fixlen_octets(&alpha_value, alpha_item.data, alpha_item.len);
+
+    // SECItem privitem;
+    // privitem.len = alpha_item.len;
+    // privitem.data = priv1->privateValue.data;
+
+    SECItem item1;
+    SECItem item2;
+    SECItem item3;
+    SECItem item4;
+    item1.len = item2.len = item3.len = item4.len = ecParams->order.len;
+    item1.data = (unsigned char *) malloc(ecParams->order.len);
+    item2.data = (unsigned char *) malloc(ecParams->order.len);
+    item3.data = (unsigned char *) malloc(ecParams->order.len);
+    item4.data = (unsigned char *) malloc(ecParams->order.len);
+
+    ec_Curve25519_pt_mul(&item4, &alpha_item, &(priv1->publicValue));// A^alpha
+    fprintf(stderr, "item4.len = %u\n", item4.len);
+    for(i = 0;i < item4.len;i++){
+        fprintf(stderr, "%u ", item4.data[i]);
+    }
+    fprintf(stderr, "\n");
+
+    ec_Curve25519_pt_mul(&item1, &(priv1->privateValue), NULL);// g^priv
+    ec_Curve25519_pt_mul(&item2, &alpha_item, &item1);// g^priv^alpha
+    fprintf(stderr, "item2.len = %u\n", item2.len);
+    for(i = 0;i < item2.len;i++){
+        fprintf(stderr, "%u ", item2.data[i]);
+    }
+    fprintf(stderr, "\n");
+
+    mp_mul(&alpha_value, &privKeyVal, &alpha_value);
+    mp_mod(&alpha_value, &order_1, &alpha_value);
+    mp_to_fixlen_octets(&alpha_value, alpha_item.data, alpha_item.len);
+    ec_Curve25519_pt_mul(&item3, &alpha_item, NULL);
+    fprintf(stderr, "item3.len = %u\n", item3.len);
+    for(i = 0;i < item3.len;i++){
+        fprintf(stderr, "%u ", item3.data[i]);
+    }
+    fprintf(stderr, "\n");
+*/
     rv |= SECOID_Shutdown();
     RNG_RNGShutdown();
     if (rv != SECSuccess) {
