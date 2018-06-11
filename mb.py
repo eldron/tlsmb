@@ -1,5 +1,6 @@
 # python 2
 
+import sys
 import SocketServer as socketserver
 import threading
 import socket
@@ -14,27 +15,27 @@ class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 def print_auth_method(method):
 	if method == 0x00:
-		print('no authentication required')
+		print 'no authentication required'
 	elif method == 0x01:
-		print('gssapi')
+		print 'gssapi'
 	elif method == 0x02:
-		print('username password')
+		print 'username password'
 	elif 0x03 <= method and method <= 0x7f:
-		print('IANA assigned')
+		print 'IANA assigned'
 	elif 0x80 <= method and method <= 0xfe:
-		print('reserved for private methods')
+		print 'reserved for private methods'
 	else:
-		print ('no acceptable methods')
+		print 'no acceptable methods'
 
 def parse_method_selection_msg(msg):
-	version = msg[0]
-	number_of_methods = msg[1]
-	print('version = ', version)
-	print('number of authentication methods = ', number_of_methods)
+	version = ord(msg[0])
+	number_of_methods = ord(msg[1])
+	print 'version = ' + str(version)
+	print 'number of authentication methods = ' + str(number_of_methods)
 
 	i = 0
 	while i < number_of_methods:
-		print_auth_method(msg[i + 2])
+		print_auth_method(ord(msg[i + 2]))
 		i = i + 1
 
 def forward_data(request, sock):
@@ -63,46 +64,52 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 
 		# receive request details
 		data = self.request.recv(1024)
-		version_number = data[0]
-		cmd = data[1]
-		address_type = data[3]
+		version_number = ord(data[0])
+		cmd = ord(data[1])
+		address_type = ord(data[3])
 		requested_address = b''
 		requested_port = 0
 
 		if cmd == 0x01:
 			if address_type == 0x01:
 				# ipv4 address, the next 4 bytes are address
-				requested_address = data[4:8]
+				#requested_address = data[4:8]
+				requested_address = (ord(data[4]) << 24) | (ord(data[5]) << 16) | (ord(data[6]) << 8) | ord(data[7])
 				# the next 2 bytes are port number in big endian
-				requested_port = int.from_bytes(data[8:10], byteorder = 'big')
+				#requested_port = int.from_bytes(data[8:10], byteorder = 'big')
+				requested_port = (ord(data[8]) << 8) | ord(data[9])
 			elif address_type == 0x03:
 				# domain name, the first byte contains the domain name length
 				address_len = data[4]
 				requested_address = data[5: 5 + address_len]
 				# the next 2 bytes are port number in big endian
-				requested_port = int.from_bytes(data[5 + address_len: 5 + address_len + 2], byteorder = 'big')
+				#requested_port = int.from_bytes(data[5 + address_len: 5 + address_len + 2], byteorder = 'big')
+				value1 = ord(data[5 + address_len])
+				value2 = ord(data[6 + address_len])
+				requested_port = (value1 << 8) | value2
 			elif address_type == 0x04:
 				# ipv6 address, the next 16 bytes are address
 				requested_address = data[4: 20]
-				requested_port = int.from_bytes(data[20:22], byteorder = 'big')
+				#requested_port = int.from_bytes(data[20:22], byteorder = 'big')
+				requested_port = (ord(data[22]) << 8) | ord(data[21])
 			else:
-				print('error: unexpected address type')
+				print 'error: unexpected address type'
 
 			# try to establish a connection with the requested address and port, and send reply to client
 			# currently does not support ipv6
 			if address_type == 0x01:
-				requested_addr = ipaddress.IPv4Address(requested_address)
-				print('trying to connect to: ', requested_addr.exploded)
+				requested_addr = ipaddress.ip_address(requested_address)
+				print 'trying to connect to: ' + requested_addr.exploded
 				connected = True
 				try:
 					sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 					sock.connect((requested_addr.exploded, requested_port))
 				except socket.error as e:
 					connected = False
-					print('socket error: ', str(e))
+					print 'socket error: ' + str(e)
 				except socket.gaierror as e:
 					connected = False
-					print('address related error: ', str(e))
+					print 'address related error: ' + str(e)
 
 				if connected:
 					# send succeeded reply
@@ -112,8 +119,10 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					succeeded_reply = succeeded_reply + b'\x00' # reserved
 					succeeded_reply = succeeded_reply + b'\x01' # address type, ipv4 address
 					bind_address, bind_port = sock.getsockname()
-					succeeded_reply = succeeded_reply + ipaddress.IPv4Address(bind_address).packed
-					succeeded_reply = succeeded_reply + bind_port.to_bytes(2, byteorder = 'big')
+					succeeded_reply = succeeded_reply + ipaddress.ip_address(unicode(bind_address)).packed
+					#succeeded_reply = succeeded_reply + bind_port.to_bytes(2, byteorder = 'big')
+					succeeded_reply = succeeded_reply + chr((bind_port & 0x0000ff00) >> 8)
+					succeeded_reply = succeeded_reply + chr(bind_port & 0x000000ff)
 					self.request.sendall(succeeded_reply)
 					# forward data
 					forward_data(self.request, sock)
@@ -137,17 +146,17 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 				self.request.close()
 			else:
 				# domain name address
-				print('trying to connect to host:', requested_address)
+				print 'trying to connect to host:' + requested_address
 				connected = True
 				try:
 					sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 					sock.connect((requested_address, requested_port))
 				except socket.error as e:
 					connected = False
-					print('socket error: ', str(e))
+					print 'socket error: ' + str(e)
 				except socket.gaierror as e:
 					connected = False
-					print('address related error: ', str(e))
+					print 'address related error: ' + str(e)
 
 				if connected:
 					# send succeed reply
@@ -157,8 +166,10 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					succeeded_reply = succeeded_reply + b'\x00' # reserved
 					succeeded_reply = succeeded_reply + b'\x01' # address type, ipv4 address
 					bind_address, bind_port = sock.getsockname()
-					succeeded_reply = succeeded_reply + ipaddress.IPv4Address(bind_address).packed
-					succeeded_reply = succeeded_reply + bind_port.to_bytes(2, byteorder = 'big')
+					succeeded_reply = succeeded_reply + ipaddress.ip_address(unicode(bind_address)).packed
+					#succeeded_reply = succeeded_reply + bind_port.to_bytes(2, byteorder = 'big')
+					succeeded_reply = succeeded_reply + chr((bind_port & 0x0000ff00) >> 8)
+					succeeded_reply = succeeded_reply + chr(bind_port & 0x000000ff)
 					self.request.sendall(succeeded_reply)
 					# forward data
 					forward_data(self.request, sock)
@@ -207,8 +218,10 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					succeeded_reply = succeeded_reply + b'\x00' # reserved
 					succeeded_reply = succeeded_reply + b'\x01' # address type, ipv4 address
 					bind_address, bind_port = udp_sock.getsockname()
-					succeeded_reply = succeeded_reply + ipaddress.IPv4Address(bind_address).packed
-					succeeded_reply = succeeded_reply +  bind_port.to_bytes(2, byteorder = 'big')
+					succeeded_reply = succeeded_reply + ipaddress.ip_address(unicode(bind_address)).packed
+					#succeeded_reply = succeeded_reply +  bind_port.to_bytes(2, byteorder = 'big')
+					succeeded_reply = succeeded_reply + chr((bind_port & 0x0000ff00) >> 8)
+					succeeded_reply = succeeded_reply + chr(bind_port & 0x000000ff)
 					self.request.sendall(succeeded_reply)
 					# forward data
 					data, client_addr = udp_sock.recvfrom(2048)
@@ -223,9 +236,13 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 				self.request.close()
 
 if __name__ == '__main__':
-	server = ThreadedTCPServer(('localhost', 10000), ThreadedTCPRequestHandler)
-	server_thread = threading.Thread(target = server.serve_forever)
-	server_thread.daemon = True
-	server_thread.start()
-	while True:
-            pass
+	if len(sys.argv) != 2:
+		print 'usage: ' + sys.argv[0] + ' port_number'
+	else:
+		port = int(sys.argv[1])
+		server = ThreadedTCPServer(('localhost', port), ThreadedTCPRequestHandler)
+		server_thread = threading.Thread(target = server.serve_forever)
+		server_thread.daemon = True
+		server_thread.start()
+		while True:
+				pass
