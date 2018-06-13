@@ -26,8 +26,8 @@ class MBHandshakeState(object):
         self.retry_client_hello = None
         self.retry_server_hello = None
         self.settings = None
-        self.server_connection = None
-        self.client_connection = None
+        self.server_connection = None # the 'fake' TLSConnection constructed from server_sock
+        self.client_connection = None # maybe we should not use this, the 'fake' TLSConnection constructed from client_sock
         self.session = None
         self.client_sock = None # the socket through which we connected with the real tls 1.3 client
         self.server_sock = None # the socket through which we connected with the tls 1.3 server
@@ -48,6 +48,28 @@ class MBHandshakeState(object):
         self.client_sock = sock
         self.client_sock = TLSConnection(sock)
     
+    def get_TLSCipherText(self, from_server):
+        """
+        get TLSCipherText record
+        header contains opaque_type, legacy_record_version, and length
+        data contains opaque data
+        """
+        if from_server:
+            connection = self.server_connection
+        else:
+            connection = self.client_connection
+        
+        result = None
+        for result in connection._recordSocket.recv():
+            if result in (0, 1):
+                yield result
+            else: break
+        assert result is not None
+
+        #(header, data) = result
+        yield result
+
+    
     # we need to implement our own getNextRecordFromSocket function
     # basically copied, remove send msg calls
     def _getNextRecordFromSocket(self, from_server):
@@ -60,6 +82,8 @@ class MBHandshakeState(object):
         try:
             # otherwise... read the next record
             # self.connection._recordLayer.recvRecord() should not contain send msg calls
+            # Read, decrypt and check integrity of a single record
+            # connection._recordLayer.recvRecord decrypts depads and checks integrity of a record
             for result in connection._recordLayer.recvRecord():
                 if result in (0, 1):
                     yield result
