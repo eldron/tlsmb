@@ -30,7 +30,13 @@ class MBHandshakeState(object):
         self.client_connection = None # maybe we should not use this, the 'fake' TLSConnection constructed from client_sock
         self.session = None
         self.client_sock = None # the socket through which we connected with the real tls 1.3 client
-        self.server_sock = None # the socket through which we connected with the tls 1.3 server
+        self.server_sock = None # the socket through which we connected with the tls 1.3 serve
+        
+        self.alpha = None # set this when we received server hello bytearray for x25519, long for secp curves
+        self.prev_public_key = None # read this from file when we received server_hello
+        self.curve_name = 'x25519' # set this when we received server hello
+        self.mb_ec_private_key = None # calculate this when we received server hello
+        self.prev_pubkey_filename = None # set this when we received server hello
 
     def set_server_sock(sock):
         """
@@ -210,6 +216,8 @@ class MBHandshakeState(object):
     def get_client_hello(self):
         """
         we read client hello from client_connection
+        for client_connection: copy _pre_client_hello_handshake_hash, then update handshake hashes
+        for server_connection: update handshake hashes
         """
         if self.state == MB_STATE_INITIAL_WAIT_CLIENT_HELLO or self.state == MB_STATE_RETRY_WAIT_CLIENT_HELLO:
             pass
@@ -223,9 +231,16 @@ class MBHandshakeState(object):
             else:
                 break
         recordHeader, p = result
+
+        # check if we received change cipher spec
+        # if so, do no further processing
+
         if recordHeader.type == ContentType.handshake:
             subType = p.get(1)
             if subType == HandshakeType.client_hello:
+                # copy for calculating PSK binders
+                self.client_connection._pre_client_hello_handshake_hash = self.client_connection._handshake_hash.copy()
+
                 # update hashes
                 self.client_connection._handshake_hash.update(p.bytes)
                 self.server_connection._handshake_hash.update(p.bytes)
@@ -251,6 +266,43 @@ class MBHandshakeState(object):
                 print 'get_client_hello: subtype is not client hello'
         else:
             print 'get_client_hello: recordHeader.type is not ContentType.handshake'
+
+    def mb_handle_hello_retry(self, hello_retry):
+        # we received client hello retry request
+        # for client_connection, we update hashes, then update hash with hello retry
+        # for server_connection, we update hashes, then update hash with hello retry
+        if self.state == MB_STATE_RETRY_WAIT_SERVER_HELLO:
+            print 'we received client hello retry request at state MB_STATE_RETRY_WAIT_SERVER_HELLO'
+            print 'this sould not happen'
+        else:
+            # we received the first hello retry
+            # change state
+            self.state = MB_STATE_RETRY_WAIT_CLIENT_HELLO
+                        
+            # update hashs for server_connection
+            # according to how client handles HRR
+            client_hello_hash = self.server_connection._handshake_hash.copy()
+            prf_name, prf_size = self.server_connection._getPRFParams(hello_retry.cipher_suite)
+            self.server_connection._handshake_hash = HandshakeHashes()
+            writer = Writer()
+            writer.add(HandshakeType.message_hash, 1)
+            writer.addVarSeq(client_hello_hash.digest(prf_name), 1, 3)
+            self.server_connection._handshake_hash.update(writer.bytes)
+            self.server_connection._handshake_hash.update(hello_retry.write())
+
+            # we may should update hashes for client_connection
+            # find how server handles HRR
+            prf_name, prf_size = self.client_connection._getPRFParams(cipherSuite)
+
+            client_hello_hash = self.client_connection._handshake_hash.digest(prf_name)
+            self.client_connection._handshake_hash = HandshakeHashes()
+            writer = Writer()
+            writer.add(HandshakeType.message_hash, 1)
+            writer.addVarSeq(client_hello_hash, 1, 3)
+            self.client_connection._handshake_hash.update(writer.bytes)
+            self.client_connection._handshake_hash.update(hello_retry.write())
+
+            self.client_hello_retry_request = hello_retry
 
     def check_server_hello(self, server_hello, real_version):
         # check server hello
@@ -378,34 +430,11 @@ class MBHandshakeState(object):
                             self.retry_server_hello = server_hello
 
                         # we are about to do key generation
-
+                        self.mb_handle_server_hello(server_hello)
                     else:
                         print 'check server hello failed'
                 else:
-                    # we received client hello retry request
-                    if self.state == MB_STATE_RETRY_WAIT_SERVER_HELLO:
-                        print 'we received client hello retry request at state MB_STATE_RETRY_WAIT_SERVER_HELLO'
-                        print 'this sould not happen'
-                    else:
-                        # we received the first hello retry
-                        # change state
-                        self.state = MB_STATE_RETRY_WAIT_CLIENT_HELLO
-                        
-                        # update hashs for server_connection
-                        # according to how client handles HRR
-                        client_hello_hash = self.server_connection._handshake_hash.copy()
-                        prf_name, prf_size = self.server_connection._getPRFParams(hello_retry.cipher_suite)
-                        self.server_connection._handshake_hash = HandshakeHashes()
-                        writer = Writer()
-                        writer.add(HandshakeType.message_hash, 1)
-                        writer.addVarSeq(client_hello_hash.digest(prf_name), 1, 3)
-                        self.server_connection._handshake_hash.update(writer.bytes)
-                        self.server_connection._handshake_hash.update(hello_retry.write())
-
-                        # we may should update hashes for client_connection
-                        # find how server handles HRR
-
-                        self.client_hello_retry_request = hello_retry
+                    self.mb_handle_hello_retry(hello_retry)
             else:
                 print 'get_server_hello: subtype is not server hello'
         else:
@@ -539,9 +568,91 @@ class MBHandshakeState(object):
             print 'an exception was raised by a Parser or Message instance'
             yield 0
           
+    def client_connection_handle_server_hello(self, server_hello, sessionCache, mb_ec_private_key):
+        """
+        mimic TLS 1.3 server to to handle server_hello for client_connection
+        server_hello is of type ServerHello
+        """
+        connection = self.client_connection
+        if self.retry_client_hello:
+            clientHello = self.retry_client_hello
+        else:
+            clientHello = self.client_hello
+
+        if clientHello.session_id and sessionCache:
+            # we set self.session here
+            # set it to None for now
+            self.session = None
+        
+        if self.session:
+            # session resumption
+
+            pass # for now
+        else:
+            # we are not doing session resumption
+            # get cipher suit
+            cipherSuite = server_hello.cipher_suit
+            # mimic _serverTLS13Handshake
+            # update handshake hashes
+            connection._handshake_hash.update(server_hello.write)
+
+
+    def mb_handle_server_hello(self, server_hello):
+        # we calculate ec private key here
+        if self.retry_client_hello:
+            clientHello = self.retry_client_hello
+        else:
+            clientHello = self.client_hello
+        srKex = server_hello.getExtension(ExtensionType.key_share).server_share
+        cl_key_share_ex = clientHello.getExtension(ExtensionType.key_share)
+        cl_kex = next((i for i in cl_key_share_ex.client_shares
+                       if i.group == srKex.group), None)
+        if cl_kex is None:
+            print 'server selected not advertised group'
+            print 'this should not happen'
+            return
+        
+        if srKex.group == GroupName.x25519:
+            self.curve_name = 'x25519'
+            # read previous ec public key
+            # bytearray of length 32
+            self.prev_pubkey_filename = self.curve_name + '.pubkey'
+            pubkey_file = open(self.prev_pubkey_filename, 'r')
+            self.prev_public_key = pubkey_file.read()
+            self.alpha = bytearray(32)
+            self.alpha[31] = 2
+        elif srKex.group == GroupName.secp256r1:
+            self.curve_name = 'secp256r1'
+            self.prev_pubkey_filename = self.curve_name + '.pubkey'
+            pubkey_file = open(self.prev_pubkey_filename, 'r')
+            curve = getCurveByName(self.curve_name)
+            self.prev_public_key = decodeX962Point(pubkey_file.read(), curve)
+            self.alpha = long(2)
+        elif srKex.group == GroupName.secp384r1:
+            self.curve_name = 'secp384r1'
+            self.prev_pubkey_filename = self.curve_name + '.pubkey'
+            pubkey_file = open(self.prev_pubkey_filename, 'r')
+            curve = getCurveByName(self.curve_name)
+            self.prev_public_key = decodeX962Point(pubkey_file.read(), curve)
+            self.alpha = long(2)
+        elif srKex.group == GroupName.secp521r1:
+            self.curve_name = 'secp521r1'
+            self.prev_pubkey_filename = self.curve_name + '.pubkey'
+            pubkey_file = open(self.prev_pubkey_filename, 'r')
+            curve = getCurveByName(self.curve_name)
+            self.prev_public_key = decodeX962Point(pubkey_file.read(), curve)
+            self.alpha = long(2)
+        else:
+            print 'server selected unsupported group'
+            print 'this should not happen'
+    
+        # now calculate ec private key
+        self.mb_ec_private_key = gen_private_key_for_middlebox(self.curve_name, self.alpha, self.prev_public_key)
+
+        # now call client_connection_handle_server_hello and server_connection_handle_server_hello
+        
     def mb_handle_server_hello(self):
-        settings = self.settings
-        session = self.session
+        # we calculate ec private key here
         if self.retry_client_hello:
             clientHello = self.retry_client_hello
         else:
