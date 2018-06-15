@@ -26,8 +26,12 @@ class MBHandshakeState(object):
         self.retry_client_hello = None
         self.retry_server_hello = None
         self.settings = None
-        self.server_connection = None # the 'fake' TLSConnection constructed from server_sock
-        self.client_connection = None # maybe we should not use this, the 'fake' TLSConnection constructed from client_sock
+        # the 'fake' TLSConnection constructed from server_sock
+        # used to mimic the behavior of real TLS 1.3 client
+        self.server_connection = None
+        # the 'fake' TLSConnection constructed from client_sock
+        # used to mimic the behavior of real TLS 1.3 server
+        self.client_connection = None 
         self.session = None
         self.client_sock = None # the socket through which we connected with the real tls 1.3 client
         self.server_sock = None # the socket through which we connected with the tls 1.3 serve
@@ -37,6 +41,9 @@ class MBHandshakeState(object):
         self.curve_name = 'x25519' # set this when we received server hello
         self.mb_ec_private_key = None # calculate this when we received server hello
         self.prev_pubkey_filename = None # set this when we received server hello
+
+        self.encrypted_extensions = None
+        self.server_cert_chain = None
 
     def set_server_sock(sock):
         """
@@ -67,7 +74,7 @@ class MBHandshakeState(object):
             connection = self.client_connection
         
         result = None
-        for result in connection._recordSocket.recv():
+        for result in connection._recordLayer._recordSocket.recv():
             if result in (0, 1):
                 yield result
             else: break
@@ -95,7 +102,7 @@ class MBHandshakeState(object):
         
         try:
             # otherwise... read the next record
-            # self.connection._recordLayer.recvRecord() should not contain send msg calls
+            # connection._recordLayer.recvRecord() should not contain send msg calls
             # Read, decrypt and check integrity of a single record
             # connection._recordLayer.recvRecord decrypts depads and checks integrity of a record
             for result in connection._recordLayer.recvRecord():
@@ -203,7 +210,13 @@ class MBHandshakeState(object):
             if header.type == ContentType.application_data or \
                     (connection.version > (3, 3) and
                      header.type == ContentType.change_cipher_spec):
-                yield (header, parser)
+                #yield (header, parser)
+                # we do not yield change cipher spec
+                # send change cipher spec to the other party
+                if from_server:
+                    self.client_sock.write(header.write() + parser.bytes)
+                else:
+                    self.server_sock.write(header.write() + parser.bytes)
             # If it's an SSLv2 ClientHello, we can return it as well, since
             # it's the only ssl2 type we support
             elif header.ssl2:
@@ -225,47 +238,36 @@ class MBHandshakeState(object):
             print 'get_client_hello: incorrect state'
             return
 
-        for result in self._getNextRecord(from_server = False):
-            if result in (0, 1):
-                pass
-            else:
-                break
-        recordHeader, p = result
+        for result in self._getMsg(from_server = False, ContentType.handshake, HandshakeType.client_hello):
+            if result in (0,1): yield result
+            else: break
+        client_hello = result
 
-        # check if we received change cipher spec
-        # if so, do no further processing
+        # copy for calculating PSK binders
+        self.client_connection._pre_client_hello_handshake_hash = self.client_connection._handshake_hash.copy()
 
-        if recordHeader.type == ContentType.handshake:
-            subType = p.get(1)
-            if subType == HandshakeType.client_hello:
-                # copy for calculating PSK binders
-                self.client_connection._pre_client_hello_handshake_hash = self.client_connection._handshake_hash.copy()
+        # update hashes
+        self.client_connection._handshake_hash.update(p.bytes)
+        self.server_connection._handshake_hash.update(p.bytes)
 
-                # update hashes
-                self.client_connection._handshake_hash.update(p.bytes)
-                self.server_connection._handshake_hash.update(p.bytes)
-
-                client_hello = ClientHello(recordHeader.ssl2).parse(p)
-                if self.state == MB_STATE_INITIAL_WAIT_CLIENT_HELLO:
-                    self.client_hello = client_hello
-                else:
-                    self.retry_client_hello = client_hello
-                
-                self.settings = mb_get_settings(self.client_hello)
-                self.session = mb_get_resumable_session(self.client_hello)
-                # we need to set session for client_connection and server_connection
-                self.client_connection.session = self.session
-                self.server_connection.session = self.session
-
-                # change state
-                if self.state == MB_STATE_INITIAL_WAIT_CLIENT_HELLO:
-                    self.state = MB_STATE_INITIAL_WAIT_SERVER_HELLO
-                else:
-                    self.state = MB_STATE_RETRY_WAIT_SERVER_HELLO
-            else:
-                print 'get_client_hello: subtype is not client hello'
+        client_hello = ClientHello(recordHeader.ssl2).parse(p)
+        if self.state == MB_STATE_INITIAL_WAIT_CLIENT_HELLO:
+            self.client_hello = client_hello
         else:
-            print 'get_client_hello: recordHeader.type is not ContentType.handshake'
+            self.retry_client_hello = client_hello
+                
+        self.settings = mb_get_settings(self.client_hello)
+        self.session = mb_get_resumable_session(self.client_hello)
+        # we need to set session for client_connection and server_connection
+        self.client_connection.session = self.session
+        self.server_connection.session = self.session
+
+        # change state
+        if self.state == MB_STATE_INITIAL_WAIT_CLIENT_HELLO:
+            self.state = MB_STATE_INITIAL_WAIT_SERVER_HELLO
+        else:
+            self.state = MB_STATE_RETRY_WAIT_SERVER_HELLO
+        
 
     def mb_handle_hello_retry(self, hello_retry):
         # we received client hello retry request
@@ -389,67 +391,69 @@ class MBHandshakeState(object):
             print 'get_server_hello: incorrect state'
             return
         
-        for result in self._getNextRecord(from_server = True):
-            if result in (0, 1):
-                pass
-            else:
-                break
-        recordHeader, p = result
-        if recordHeader.type == ContentType.handshake:
-            subType = p.get(1)
-            if subType == HandshakeType.server_hello:
-                unknown_record = ServerHello().parse(p)
-                hello_retry = None
-                server_hello = None
-                ext = unknown_record.getExtension(ExtensionType.supported_versions)
-                if ext.version > (3, 3):
-                    pass
-                else:
-                    print 'get_server_hello: unexpected version'
+        for result in self._getMsg(from_server = True, ContentType.handshake, HandshakeType.server_hello):
+            if result in (0,1): yield result
+            else: break
+        unknown_record = result
 
-                if unknown_record.random == TLS_1_3_HRR and ext and ext.version > (3, 3):
-                    hello_retry = unknown_record
-                else:
-                    server_hello = unknown_record
-
-                if server_hello:
-                    # we received server hello
-                    # get server hello version
-                    real_version = server_hello.server_version
-                    if server_hello.server_version >= (3, 3):
-                        ext = server_hello.getExtension(ExtensionType.supported_versions)
-                        if ext:
-                            real_version = ext.version
-                    self.server_connection.version = real_version
-                    self.client_connection.version = real_version
-                    # check server hello
-                    if self.check_server_hello(server_hello, real_version):
-                        if self.state == MB_STATE_INITIAL_WAIT_SERVER_HELLO:
-                            self.server_hello = server_hello
-                        else:
-                            self.retry_server_hello = server_hello
-
-                        # we are about to do key generation
-                        self.mb_handle_server_hello(server_hello)
-                    else:
-                        print 'check server hello failed'
-                else:
-                    self.mb_handle_hello_retry(hello_retry)
-            else:
-                print 'get_server_hello: subtype is not server hello'
+        hello_retry = None
+        server_hello = None
+        ext = unknown_record.getExtension(ExtensionType.supported_versions)
+        if ext.version > (3, 3):
+            pass
         else:
-            print 'get_server_hello: recordHeader.type is not ContentType.handshake'
-    # maybe we don't need this function
+            print 'get_server_hello: unexpected version'
+
+        if unknown_record.random == TLS_1_3_HRR and ext and ext.version > (3, 3):
+            hello_retry = unknown_record
+        else:
+            server_hello = unknown_record
+
+        if server_hello:
+            # we received server hello
+            # get server hello version
+            real_version = server_hello.server_version
+            if server_hello.server_version >= (3, 3):
+                ext = server_hello.getExtension(ExtensionType.supported_versions)
+                if ext:
+                    real_version = ext.version
+            self.server_connection.version = real_version
+            self.client_connection.version = real_version
+            # check server hello
+            if self.check_server_hello(server_hello, real_version):
+                if self.state == MB_STATE_INITIAL_WAIT_SERVER_HELLO:
+                    self.server_hello = server_hello
+                else:
+                    self.retry_server_hello = server_hello
+
+                # we are about to do key generation
+                self.mb_handle_server_hello(server_hello)
+            else:
+                print 'check server hello failed'
+        else:
+            self.mb_handle_hello_retry(hello_retry)
+        
+    
+
     # we need to implement our own getMsg function
-    def getMsg(self, from_server, expectedType, secondaryType=None, constructorType=None):
+    # this function can be called to:
+    #   get client hello from client_connection
+    #   get server_hello from server_connection
+    #   get encrypted extensions from server_connection
+    #   get certificate from server_connection
+    #   get certificate verify from server_connection
+    #   get finished from server_connection and client_connection
+    # handshake hashes for connection are not automatically updated
+    def _getMsg(self, from_server, expectedType, secondaryType=None, constructorType=None):
         if from_server:
             connection = self.server_connection
         else:
             connection = self.client_connection
-        
+
         try:
             if not isinstance(expectedType, tuple):
                 expectedType = (expectedType,)
+
 
             #Spin in a loop, until we've got a non-empty record of a type we
             #expect.  The loop will be repeated if:
@@ -464,39 +468,100 @@ class MBHandshakeState(object):
                         break
                 recordHeader, p = result
 
-                # the msg is already plaintext, we need to send ciphertext to the other party
-                # # we send to the other party
-                # if from_server:
-                #     self.client_sock.write(recordHeader.write() + p.bytes)
-                # else:
-                #     self.server_sock.write(recordHeader.write() + p.bytes)
-
+                # the msg is already plaintext, we ahve sent the cipher text to the other party
                 # if this is a CCS message in TLS 1.3, sanity check and
                 # continue
-                if connection.version > (3, 3) and \
+                if self.version > (3, 3) and \
                         ContentType.handshake in expectedType and \
                         recordHeader.type == ContentType.change_cipher_spec:
-                    ccs = ChangeCipherSpec().parse(p)
-                    if ccs.type != 1:
-                        # for result in self._sendError(
-                        #         AlertDescription.unexpected_message,
-                        #         "Invalid CCS message received"):
-                        #     yield result
-                        print 'invalid CCS message received'
-                        yield 0
+                    # in fact we should not receive CCS here
+                    print '_getMsg: received CCS, this should not happen'
+                    # ccs = ChangeCipherSpec().parse(p)
+                    # if ccs.type != 1:
+                    #     for result in self._sendError(
+                    #             AlertDescription.unexpected_message,
+                    #             "Invalid CCS message received"):
+                    #         yield result
                     # ignore the message
                     continue
 
                 #If we received an unexpected record type...
                 if recordHeader.type not in expectedType:
-                    # we don't need to further process it
+                    print 'getMsg: recordHeader.type not in expectedType'
+                    #If we received an alert...
+                    if recordHeader.type == ContentType.alert:
+                        print 'getMsg: received alert'
+                        # alert = Alert().parse(p)
+
+                        # #We either received a fatal error, a warning, or a
+                        # #close_notify.  In any case, we're going to close the
+                        # #connection.  In the latter two cases we respond with
+                        # #a close_notify, but ignore any socket errors, since
+                        # #the other side might have already closed the socket.
+                        # if alert.level == AlertLevel.warning or \
+                        #    alert.description == AlertDescription.close_notify:
+
+                        #     #If the sendMsg() call fails because the socket has
+                        #     #already been closed, we will be forgiving and not
+                        #     #report the error nor invalidate the "resumability"
+                        #     #of the session.
+                        #     try:
+                        #         alertMsg = Alert()
+                        #         alertMsg.create(AlertDescription.close_notify,
+                        #                         AlertLevel.warning)
+                        #         for result in self._sendMsg(alertMsg):
+                        #             yield result
+                        #     except socket.error:
+                        #         pass
+
+                        #     if alert.description == \
+                        #            AlertDescription.close_notify:
+                        #         self._shutdown(True)
+                        #     elif alert.level == AlertLevel.warning:
+                        #         self._shutdown(False)
+
+                        # else: #Fatal alert:
+                        #     self._shutdown(False)
+
+                        # #Raise the alert as an exception
+                        # raise TLSRemoteAlert(alert)
+
+                    #If we received a renegotiation attempt...
+                    if recordHeader.type == ContentType.handshake:
+                        print 'renegotiation attempt'
+                        # subType = p.get(1)
+                        # reneg = False
+                        # if self._client:
+                        #     if subType == HandshakeType.hello_request:
+                        #         reneg = True
+                        # else:
+                        #     if subType == HandshakeType.client_hello:
+                        #         reneg = True
+                        # # Send no_renegotiation if we're not negotiating
+                        # # a connection now, then try again
+                        # if reneg and self.session:
+                        #     alertMsg = Alert()
+                        #     alertMsg.create(AlertDescription.no_renegotiation,
+                        #                     AlertLevel.warning)
+                        #     for result in self._sendMsg(alertMsg):
+                        #         yield result
+                        #     continue
+
+                    # #Otherwise: this is an unexpected record, but neither an
+                    # #alert nor renegotiation
+                    # for result in self._sendError(\
+                    #         AlertDescription.unexpected_message,
+                    #         "received type=%d" % recordHeader.type):
+                    #     yield result
 
                 #If this is an empty application-data fragment, try again
                 if recordHeader.type == ContentType.application_data:
                     if p.index == len(p.bytes):
                         continue
 
-                break# we've got a non-empty record of a type we expect. 
+                break
+
+            # we've got a non-empty record of a type we expect. 
 
             #Parse based on content_type
             if recordHeader.type == ContentType.change_cipher_spec:
@@ -512,23 +577,37 @@ class MBHandshakeState(object):
 
                 #If it's a handshake message, check handshake header
                 if recordHeader.ssl2:
+                    print 'recordHeader.ssl2: this should not happen'
                     subType = p.get(1)
                     if subType != HandshakeType.client_hello:
-                        print 'subtype != client_hello, can only handle SSLv2 ClientHello messages'
+                        # for result in self._sendError(\
+                        #         AlertDescription.unexpected_message,
+                        #         "Can only handle SSLv2 ClientHello messages"):
+                        #     yield result
                         yield 0
                     if HandshakeType.client_hello not in secondaryType:
-                        print 'received unexpceted msg: secondary type error'
+                        # for result in self._sendError(\
+                        #         AlertDescription.unexpected_message):
+                        #     yield result
                         yield 0
                     subType = HandshakeType.client_hello
                 else:
                     subType = p.get(1)
                     if subType not in secondaryType:
-                        print 'subtype not in secondaryType'
+                        print 'subtype not in sedondaryType'
+                        # exp = to_str_delimiter(HandshakeType.toStr(i) for i in
+                        #                        secondaryType)
+                        # rec = HandshakeType.toStr(subType)
+                        # for result in self._sendError(AlertDescription
+                        #                               .unexpected_message,
+                        #                               "Expecting {0}, got {1}"
+                        #                               .format(exp, rec)):
+                        #     yield result
                         yield 0
-
-                #Update handshake hashes
-                #self._handshake_hash.update(p.bytes)
-                connection._handshake_hash.update(p.bytes)
+                
+                # maybe we should update hashes outside
+                # #Update handshake hashes
+                # connection._handshake_hash.update(p.bytes)
 
                 #Parse based on handshake type
                 if subType == HandshakeType.client_hello:
@@ -562,12 +641,12 @@ class MBHandshakeState(object):
 
         #If an exception was raised by a Parser or Message instance:
         except SyntaxError as e:
+            print 'an exception was raised by a Parser or Message instance'
+            yield 0
             # for result in self._sendError(AlertDescription.decode_error,
             #                              formatExceptionTrace(e)):
             #     yield result
-            print 'an exception was raised by a Parser or Message instance'
-            yield 0
-          
+           
     def client_connection_handle_server_hello(self, server_hello, sessionCache, mb_ec_private_key):
         """
         mimic TLS 1.3 server to to handle server_hello for client_connection
@@ -578,6 +657,8 @@ class MBHandshakeState(object):
             clientHello = self.retry_client_hello
         else:
             clientHello = self.client_hello
+
+        settings = self.settings
 
         if clientHello.session_id and sessionCache:
             # we set self.session here
@@ -591,11 +672,166 @@ class MBHandshakeState(object):
         else:
             # we are not doing session resumption
             # get cipher suit
-            cipherSuite = server_hello.cipher_suit
+            cipherSuite = server_hello.cipher_suite
             # mimic _serverTLS13Handshake
             # update handshake hashes
-            connection._handshake_hash.update(server_hello.write)
+            connection._handshake_hash.update(server_hello.write())
+            # calculate ECDH key
+            prf_name, prf_size = connection._getPRFParams(cipherSuite)
+            secret = bytearray(prf_size)
+            share = clientHello.getExtension(ExtensionType.key_share)
+            share_ids = [i.group for i in share.client_shares]
+            # we read selected group from server hello
+            selected_group = server_hello.getExtension(ExtensionType.key_share).server_share
+            cl_key_share = next(i for i in share.client_shares if i.group == selected_group)
+            
+            # we read psk from server hello
+            psk = None
+            selected_psk = None
+            psks = clientHello.getExtension(ExtensionType.pre_shared_key)
+            psk_types = clientHello.getExtension(ExtensionType.psk_key_exchange_modes)
+            
 
+            if psk is None:
+                psk = bytearray(prf_size)
+
+            kex = connection._getKEX(selected_group, version)
+            key_share = # we read key share form server hello
+            Z = kex.calc_shared_key(self.mb_ec_private_key, key_share.key_exchange) # calculate ec key
+            # Early secret
+            secret = secureHMAC(secret, psk, prf_name)
+            # Handshake Secret
+            secret = derive_secret(secret, bytearray(b'derived'), None, prf_name)
+            secret = secureHMAC(secret, Z, prf_name)
+
+            sr_handshake_traffic_secret = derive_secret(secret,
+                                                        bytearray(b's hs traffic'),
+                                                        connection._handshake_hash,
+                                                        prf_name)
+            cl_handshake_traffic_secret = derive_secret(secret,
+                                                        bytearray(b'c hs traffic'),
+                                                        connection._handshake_hash,
+                                                        prf_name)
+            connection._recordLayer.calcTLS1_3PendingState(
+                cipherSuite,
+                cl_handshake_traffic_secret,
+                sr_handshake_traffic_secret,
+                settings.cipherImplementations)
+
+            connection._changeWriteState()
+            # wait to receive encrypted extensions
+            self.state = MB_STATE_WAIT_ENCRYPTED_EXTENSIONS
+
+            return (secret, prf_name)
+
+    # we received decrypted encrypted extensions from server_connection
+    # update hashes for client_connection
+    # encrypted_extensions is of type EncryptedExtensions
+    def client_connection_handle_encrypted_extensions(self, encrypted_extensions, secret, prf_name):
+        self.client_connection._handshake_hash.update(encrypted_extensions.write())
+        return (secret, prf_name)
+
+    # we received decrypted certificate from server_connection
+    # update hashes for client_connection
+    # certificate is of type Certificate
+    def client_connection_handle_certificate(self, certificate, secret, prf_name):
+        self.client_connection._handshake_hash.update(certificate.write())
+        return (secret, prf_name)
+    
+    # we received decrypted certificate verify from server_connection
+    # update hashes for client connection
+    # certificate_verify is of type CertificateVerify
+    def client_connection_handle_certificate_verify(self, certificate_verify, secret, prf_name):
+        self.client_connection._handshake_hash.digest(prf_name)
+        # maybe we do not need the above
+        self.client_connection._handshake_hash.update(certificate_verify.write())
+        return (secret, prf_name)
+
+    # we received decrypted finished from server_connection
+    # finished is of type Finished
+    def client_connection_handle_server_finished(self, finished, secret, prf_name):
+        settings = self.settings
+        self.client_connection._handshake_hash.digest(prf_name)
+        # maybe we do not need the above
+        self.client_connection._handshake_hash.update(finished.write())
+
+        self.client_connection._changeReadState()
+
+        # Master secret
+        secret = derive_secret(secret, bytearray(b'derived'), None, prf_name)
+        secret = secureHMAC(secret, bytearray(prf_size), prf_name)
+
+        cl_app_traffic = derive_secret(secret, bytearray(b'c ap traffic'),
+                                       self.client_connection._handshake_hash, prf_name)
+        sr_app_traffic = derive_secret(secret, bytearray(b's ap traffic'),
+                                       self.client_connection._handshake_hash, prf_name)
+        self.client_connection._recordLayer.calcTLS1_3PendingState(server_hello.cipher_suite,
+                                                 cl_app_traffic,
+                                                 sr_app_traffic,
+                                                 settings
+                                                 .cipherImplementations)
+
+        # as both exporter and resumption master secrets include handshake
+        # transcript, we need to derive them early
+        exporter_master_secret = derive_secret(secret,
+                                               bytearray(b'exp master'),
+                                               self.client_connection._handshake_hash,
+                                               prf_name)
+        return (secret, exporter_master_secret, prf_name)
+
+    # we received decrypted client finished from client_connection
+    # finished is of type Finished
+    def client_connection_handle_client_finished(self, finished, secret, cl_app_traffic, sr_app_traffic, exporter_master_secret, prf_name):
+        self.client_connection._handshake_hash.digest(prf_name)
+        self.client_connection._handshake_hash.update(finished.write())
+        resumption_master_secret = derive_secret(secret,
+                                                 bytearray(b'res master'),
+                                                 self.client_connection._handshake_hash,
+                                                 prf_name)
+        self.client_connection.session = Session()
+        self.client_connection.extendedMasterSecret = True
+        server_name = None
+        if self.retry_client_hello:
+            clientHello = self.retry_client_hello
+        else:
+            clientHello = self.client_hello
+        
+        if clientHello.server_name:
+            server_name = clientHello.server_name.decode('utf-8')
+
+        
+        app_proto = None
+        alpnExt = self.encrypted_extensions.getExtension(ExtensionType.alpn)
+        if alpnExt:
+            app_proto = alpnExt.protocol_names[0]
+
+        if self.retry_server_hello:
+            serverHello = self.retry_server_hello
+        else:
+            serverHello = self.server_hello
+
+        self.client_connection.session.create(secret,
+                            bytearray(b''),  # no session_id
+                            serverHello.cipher_suite,
+                            bytearray(b''),  # no SRP
+                            None,
+                            self.server_cert_chain,
+                            None,
+                            False,
+                            server_name,
+                            encryptThenMAC=False,
+                            extendedMasterSecret=True,
+                            appProto=app_proto,
+                            cl_app_secret=cl_app_traffic,
+                            sr_app_secret=sr_app_traffic,
+                            exporterMasterSecret=exporter_master_secret,
+                            resumptionMasterSecret=resumption_master_secret)
+
+        # switch to application_traffic_secret
+        self.client_connection._changeWriteState()
+        self.client_connection._changeReadState()
+
+    def client_connection_handle_tickets(self, tickets):
 
     def mb_handle_server_hello(self, server_hello):
         # we calculate ec private key here
@@ -650,78 +886,78 @@ class MBHandshakeState(object):
         self.mb_ec_private_key = gen_private_key_for_middlebox(self.curve_name, self.alpha, self.prev_public_key)
 
         # now call client_connection_handle_server_hello and server_connection_handle_server_hello
-        
-    def mb_handle_server_hello(self):
-        # we calculate ec private key here
-        if self.retry_client_hello:
-            clientHello = self.retry_client_hello
-        else:
-            clientHello = self.client_hello
 
-        if self.retry_server_hello:
-            serverHello = self.retry_server_hello
-        else:
-            serverHello = self.server_hello
+    # def mb_handle_server_hello(self):
+    #     # we calculate ec private key here
+    #     if self.retry_client_hello:
+    #         clientHello = self.retry_client_hello
+    #     else:
+    #         clientHello = self.client_hello
 
-        # we have client and server hello in TLS 1.3 so we have the necessary
-        # key shares to derive the handshake receive key
-        srKex = serverHello.getExtension(ExtensionType.key_share).server_share
-        cl_key_share_ex = clientHello.getExtension(ExtensionType.key_share)
-        cl_kex = next((i for i in cl_key_share_ex.client_shares
-                       if i.group == srKex.group), None)
-        if cl_kex is None:
-            print 'server selected not advertised group'
-            print 'this should not happen'
-            raise TLSIllegalParameterException("Server selected not advertised"
-                                               " group.")
-        kex = self.connection._getKEX(srKex.group, self.connection.version)
+    #     if self.retry_server_hello:
+    #         serverHello = self.retry_server_hello
+    #     else:
+    #         serverHello = self.server_hello
 
-        Z = kex.calc_shared_key(cl_kex.private, srKex.key_exchange)
+    #     # we have client and server hello in TLS 1.3 so we have the necessary
+    #     # key shares to derive the handshake receive key
+    #     srKex = serverHello.getExtension(ExtensionType.key_share).server_share
+    #     cl_key_share_ex = clientHello.getExtension(ExtensionType.key_share)
+    #     cl_kex = next((i for i in cl_key_share_ex.client_shares
+    #                    if i.group == srKex.group), None)
+    #     if cl_kex is None:
+    #         print 'server selected not advertised group'
+    #         print 'this should not happen'
+    #         raise TLSIllegalParameterException("Server selected not advertised"
+    #                                            " group.")
+    #     kex = self.connection._getKEX(srKex.group, self.connection.version)
 
-        prfName, prf_size = self._getPRFParams(serverHello.cipher_suite)
-        # if server agreed to perform resumption, find the matching secret key
-        srPSK = serverHello.getExtension(ExtensionType.pre_shared_key)
-        resuming = False
-        if srPSK:
-            clPSK = clientHello.getExtension(ExtensionType.pre_shared_key)
-            ident = clPSK.identities[srPSK.selected]
-            psk = [i[1] for i in settings.pskConfigs if i[0] == ident.identity]
-            if psk:
-                psk = psk[0]
-            else:
-                resuming = True
-                psk = HandshakeHelpers.calc_res_binder_psk(
-                    ident, session.resumptionMasterSecret,
-                    session.tickets)
-        else:
-            psk = bytearray(prf_size)
+    #     Z = kex.calc_shared_key(cl_kex.private, srKex.key_exchange)
 
-        secret = bytearray(prf_size)
-        # Early Secret
-        secret = secureHMAC(secret, psk, prfName)
-        # Handshake Secret
-        secret = derive_secret(secret, bytearray(b'derived'),
-                               None, prfName)
-        secret = secureHMAC(secret, Z, prfName)
+    #     prfName, prf_size = self._getPRFParams(serverHello.cipher_suite)
+    #     # if server agreed to perform resumption, find the matching secret key
+    #     srPSK = serverHello.getExtension(ExtensionType.pre_shared_key)
+    #     resuming = False
+    #     if srPSK:
+    #         clPSK = clientHello.getExtension(ExtensionType.pre_shared_key)
+    #         ident = clPSK.identities[srPSK.selected]
+    #         psk = [i[1] for i in settings.pskConfigs if i[0] == ident.identity]
+    #         if psk:
+    #             psk = psk[0]
+    #         else:
+    #             resuming = True
+    #             psk = HandshakeHelpers.calc_res_binder_psk(
+    #                 ident, session.resumptionMasterSecret,
+    #                 session.tickets)
+    #     else:
+    #         psk = bytearray(prf_size)
 
-        # server handshake traffic secret
-        sr_handshake_traffic_secret = derive_secret(secret,
-                                                    bytearray(b's hs traffic'),
-                                                    self.connection._handshake_hash,
-                                                    prfName)
-        # client handshake traffic secret
-        cl_handshake_traffic_secret = derive_secret(secret,
-                                                    bytearray(b'c hs traffic'),
-                                                    self.connection._handshake_hash,
-                                                    prfName)
-        # prepare for reading encrypted messages
-        self.connection._recordLayer.calcTLS1_3PendingState(
-            serverHello.cipher_suite,
-            cl_handshake_traffic_secret,
-            sr_handshake_traffic_secret,
-            settings.cipherImplementations)
+    #     secret = bytearray(prf_size)
+    #     # Early Secret
+    #     secret = secureHMAC(secret, psk, prfName)
+    #     # Handshake Secret
+    #     secret = derive_secret(secret, bytearray(b'derived'),
+    #                            None, prfName)
+    #     secret = secureHMAC(secret, Z, prfName)
 
-        self.connection._changeReadState()
+    #     # server handshake traffic secret
+    #     sr_handshake_traffic_secret = derive_secret(secret,
+    #                                                 bytearray(b's hs traffic'),
+    #                                                 self.connection._handshake_hash,
+    #                                                 prfName)
+    #     # client handshake traffic secret
+    #     cl_handshake_traffic_secret = derive_secret(secret,
+    #                                                 bytearray(b'c hs traffic'),
+    #                                                 self.connection._handshake_hash,
+    #                                                 prfName)
+    #     # prepare for reading encrypted messages
+    #     self.connection._recordLayer.calcTLS1_3PendingState(
+    #         serverHello.cipher_suite,
+    #         cl_handshake_traffic_secret,
+    #         sr_handshake_traffic_secret,
+    #         settings.cipherImplementations)
+
+    #     self.connection._changeReadState()
 
     def mb_hanlde_encrypted_extensions(self):
 
@@ -755,156 +991,132 @@ class MBHandshakeState(object):
         # we receive client hello from self.client_connection
         header, data = self._getNextRecord(from_server = False)
         if header.
-    def handle_record(self, record_data):
-        """
-        record_data: input, of type bytearray, a complete TLS record raw data
-        """
-        content_type = ord(record_data[0])
-        if content_type == ContentType.handshake:
-            client_hello = None
-            server_hello = None
-            hello_retry = None
-            msg_type = ord(record_data[5])
-            if msg_type == HandshakeType.client_hello:
-                client_hello = mb_set_client_hello(record_data)
-            elif msg_type == HandshakeType.server_hello:
-                result = mb_set_server_hello(record_data)
-                ext = result.getExtension(ExtensionType.supported_versions)
-                if ext.version > (3, 3):
-                    pass
-                else:
-                    print 'handle_record: unexpected version'
+    # def handle_record(self, record_data):
+    #     """
+    #     record_data: input, of type bytearray, a complete TLS record raw data
+    #     """
+    #     content_type = ord(record_data[0])
+    #     if content_type == ContentType.handshake:
+    #         client_hello = None
+    #         server_hello = None
+    #         hello_retry = None
+    #         msg_type = ord(record_data[5])
+    #         if msg_type == HandshakeType.client_hello:
+    #             client_hello = mb_set_client_hello(record_data)
+    #         elif msg_type == HandshakeType.server_hello:
+    #             result = mb_set_server_hello(record_data)
+    #             ext = result.getExtension(ExtensionType.supported_versions)
+    #             if ext.version > (3, 3):
+    #                 pass
+    #             else:
+    #                 print 'handle_record: unexpected version'
 
-                if result.random == TLS_1_3_HRR and ext and ext.version > (3, 3):
-                    hello_retry = result
-                else:
-                    server_hello = result
-            else:
-                print 'handle_record: unexpected handshake type'
+    #             if result.random == TLS_1_3_HRR and ext and ext.version > (3, 3):
+    #                 hello_retry = result
+    #             else:
+    #                 server_hello = result
+    #         else:
+    #             print 'handle_record: unexpected handshake type'
 
-            if client_hello != None:
-                # we received client hello
-                if self.state == MB_STATE_INITIAL_WAIT_CLIENT_HELLO:
-                    # we received first client hello
-                    if self.connection == None and self.settings == None and self.session == None:
-                        self.client_hello = client_hello
-                        self.settings = mb_get_settings(client_hello)
-                        self.session = mb_get_resumable_session(client_hello)
-                        self.connection = TLSConnection(None) # initialized handshake hashes
-                        self.connection.sock = None
-                        self.connection.session = self.session
-                        self.connection._handshake_hash.update(client_hello.write())
-                        self.state = MB_STATE_INITIAL_WAIT_SERVER_HELLO
-                    else:
-                        print 'at state initial wait client hello, connection or settings or session is not None'
-                        print 'this should not happen'
-                elif self.state == MB_STATE_RETRY_WAIT_CLIENT_HELLO:
-                    # we recevied the second client hello
-                    if self.connection != None:
-                        self.retry_client_hello = client_hello
-                        self.settings = mb_get_settings(client_hello)
-                        self.session = mb_get_resumable_session(client_hello)
-                        self.connection.session = self.session
-                        self.connection._handshake_hash.update(client_hello.write())
-                        self.state = MB_STATE_RETRY_WAIT_SERVER_HELLO
-                    else:
-                        print 'we received the second client hello, but connection is None'
-                        print 'this should not happen'
-                else:
-                    print 'handle_record: received client hello at unexpected state'
-            elif server_hello != None:
-                # we received server_hello
-                if self.state == MB_STATE_INITIAL_WAIT_SERVER_HELLO or self.state == MB_STATE_RETRY_WAIT_SERVER_HELLO:
-                    # we received the first server hello
+    #         if client_hello != None:
+    #             # we received client hello
+    #             if self.state == MB_STATE_INITIAL_WAIT_CLIENT_HELLO:
+    #                 # we received first client hello
+    #                 if self.connection == None and self.settings == None and self.session == None:
+    #                     self.client_hello = client_hello
+    #                     self.settings = mb_get_settings(client_hello)
+    #                     self.session = mb_get_resumable_session(client_hello)
+    #                     self.connection = TLSConnection(None) # initialized handshake hashes
+    #                     self.connection.sock = None
+    #                     self.connection.session = self.session
+    #                     self.connection._handshake_hash.update(client_hello.write())
+    #                     self.state = MB_STATE_INITIAL_WAIT_SERVER_HELLO
+    #                 else:
+    #                     print 'at state initial wait client hello, connection or settings or session is not None'
+    #                     print 'this should not happen'
+    #             elif self.state == MB_STATE_RETRY_WAIT_CLIENT_HELLO:
+    #                 # we recevied the second client hello
+    #                 if self.connection != None:
+    #                     self.retry_client_hello = client_hello
+    #                     self.settings = mb_get_settings(client_hello)
+    #                     self.session = mb_get_resumable_session(client_hello)
+    #                     self.connection.session = self.session
+    #                     self.connection._handshake_hash.update(client_hello.write())
+    #                     self.state = MB_STATE_RETRY_WAIT_SERVER_HELLO
+    #                 else:
+    #                     print 'we received the second client hello, but connection is None'
+    #                     print 'this should not happen'
+    #             else:
+    #                 print 'handle_record: received client hello at unexpected state'
+    #         elif server_hello != None:
+    #             # we received server_hello
+    #             if self.state == MB_STATE_INITIAL_WAIT_SERVER_HELLO or self.state == MB_STATE_RETRY_WAIT_SERVER_HELLO:
+    #                 # we received the first server hello
 
-                    # get server hello version
-                    real_version = server_hello.server_version
-                    if server_hello.server_version >= (3, 3):
-                        ext = server_hello.getExtension(ExtensionType.supported_versions)
-                        if ext:
-                            real_version = ext.version
-                    self.connection.version = real_version
+    #                 # get server hello version
+    #                 real_version = server_hello.server_version
+    #                 if server_hello.server_version >= (3, 3):
+    #                     ext = server_hello.getExtension(ExtensionType.supported_versions)
+    #                     if ext:
+    #                         real_version = ext.version
+    #                 self.connection.version = real_version
 
-                    # check server hello
-                    check_server_hello_result = self.check_server_hello(server_hello, real_version)
+    #                 # check server hello
+    #                 check_server_hello_result = self.check_server_hello(server_hello, real_version)
                     
-                    if check_server_hello_result:
-                        # we are about to do key generation
-                        if self.state == MB_STATE_INITIAL_WAIT_SERVER_HELLO:
-                            self.server_hello = server_hello
-                        else:
-                            self.retry_server_hello = server_hello
+    #                 if check_server_hello_result:
+    #                     # we are about to do key generation
+    #                     if self.state == MB_STATE_INITIAL_WAIT_SERVER_HELLO:
+    #                         self.server_hello = server_hello
+    #                     else:
+    #                         self.retry_server_hello = server_hello
                         
-                        if real_version > (3, 3):
-                            # immitate TLS 1.3 client handshake
-                            self.connection.version = real_version
-                            self.state = MB_STATE_HANDSHAKE_DONE
-                        else:
-                            print 'real_version <= (3, 3)'
-                            print 'this should not happen'
-                    else:
-                        self.state = MB_STATE_HANDSHAKE_ABORT
-                elif self.state == MB_STATE_RETRY_WAIT_SERVER_HELLO:
-                    # we received the second server hello
-                    self.state = MB_STATE_HANDSHAKE_DONE
-                else:
-                    print 'we received server hello at unexpected state'
-                    print 'this should not happen'
-            elif hello_retry != None:
-                # we received hello_retry
-                if self.state == MB_STATE_INITIAL_WAIT_SERVER_HELLO:
-                    # we received the first hello retry
-                    self.state = MB_STATE_RETRY_WAIT_CLIENT_HELLO
-                    client_hello_hash = self.connection._handshake_hash.copy()
-                    prf_name, prf_size = self.connection._getPRFParams(hello_retry.cipher_suite)
-                    self.connection._handshake_hash = HandshakeHashes()
-                    writer = Writer()
-                    writer.add(HandshakeType.message_hash, 1)
-                    writer.addVarSeq(client_hello_hash.digest(prf_name), 1, 3)
-                    self.connection._handshake_hash.update(writer.bytes)
-                    self.connection._handshake_hash.update(hello_retry.write())
-                    self.client_hello_retry_request = hello_retry
-                elif self.state == MB_STATE_RETRY_WAIT_SERVER_HELLO:
-                    self.state = MB_STATE_HANDSHAKE_ABORT
-                    print 'we received multiple hello retries'
-                    print 'this should happen in TLS 1.3'
-                else:
-                    print 'we received hello retry at unexpected state'
-                    print 'this should happen'
-            else:
-                print 'client_hello, server_hello and hello_retry are all None'
-                print 'this should not happen'
-        elif content_type == ContentType.change_cipher_spec:
-            pass
-        elif content_type == ContentType.alert:
-            pass
-        else:
-            # ContentType.application_data
-            # we decrypt application data and perform DPI
-    
-# once we implemented our getMsg function, the following two functions won't be neededs
-def mb_set_client_hello(record_data):
-    """
-    return constructed client hello from raw client hello wire data
-    record_data: input, raw record data, of type bytearray
-    """
-    client_hello_data = record_data[6:]
-    parser = Parser(client_hello_data)
-    client_hello = ClientHello()
-    client_hello.ssl2 = False
-    client_hello.parse(parser)
-    return client_hello
-
-def mb_set_server_hello(record_data):
-    """
-    return constructed server hello from raw server hello wire data
-    record_data: input, raw record data, of type bytearray
-    """
-    server_hello_data = record_data[6:]
-    parser = Parser(server_hello_data)
-    server_hello = ServerHello()
-    server_hello.parse(parser)
-    return server_hello
+    #                     if real_version > (3, 3):
+    #                         # immitate TLS 1.3 client handshake
+    #                         self.connection.version = real_version
+    #                         self.state = MB_STATE_HANDSHAKE_DONE
+    #                     else:
+    #                         print 'real_version <= (3, 3)'
+    #                         print 'this should not happen'
+    #                 else:
+    #                     self.state = MB_STATE_HANDSHAKE_ABORT
+    #             elif self.state == MB_STATE_RETRY_WAIT_SERVER_HELLO:
+    #                 # we received the second server hello
+    #                 self.state = MB_STATE_HANDSHAKE_DONE
+    #             else:
+    #                 print 'we received server hello at unexpected state'
+    #                 print 'this should not happen'
+    #         elif hello_retry != None:
+    #             # we received hello_retry
+    #             if self.state == MB_STATE_INITIAL_WAIT_SERVER_HELLO:
+    #                 # we received the first hello retry
+    #                 self.state = MB_STATE_RETRY_WAIT_CLIENT_HELLO
+    #                 client_hello_hash = self.connection._handshake_hash.copy()
+    #                 prf_name, prf_size = self.connection._getPRFParams(hello_retry.cipher_suite)
+    #                 self.connection._handshake_hash = HandshakeHashes()
+    #                 writer = Writer()
+    #                 writer.add(HandshakeType.message_hash, 1)
+    #                 writer.addVarSeq(client_hello_hash.digest(prf_name), 1, 3)
+    #                 self.connection._handshake_hash.update(writer.bytes)
+    #                 self.connection._handshake_hash.update(hello_retry.write())
+    #                 self.client_hello_retry_request = hello_retry
+    #             elif self.state == MB_STATE_RETRY_WAIT_SERVER_HELLO:
+    #                 self.state = MB_STATE_HANDSHAKE_ABORT
+    #                 print 'we received multiple hello retries'
+    #                 print 'this should happen in TLS 1.3'
+    #             else:
+    #                 print 'we received hello retry at unexpected state'
+    #                 print 'this should happen'
+    #         else:
+    #             print 'client_hello, server_hello and hello_retry are all None'
+    #             print 'this should not happen'
+    #     elif content_type == ContentType.change_cipher_spec:
+    #         pass
+    #     elif content_type == ContentType.alert:
+    #         pass
+    #     else:
+    #         # ContentType.application_data
+    #         # we decrypt application data and perform DPI
 
 def mb_get_settings(client_hello, sever_hello):
     """
