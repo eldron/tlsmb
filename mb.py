@@ -6,6 +6,7 @@ import threading
 import socket
 import ipaddress
 import selectors2 as selectors
+from mb_utils import *
 
 udp_bind_port = 10000
 udp_associate_support = False
@@ -125,7 +126,12 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					succeeded_reply = succeeded_reply + chr(bind_port & 0x000000ff)
 					self.request.sendall(succeeded_reply)
 					# forward data
-					forward_data(self.request, sock)
+					#forward_data(self.request, sock)
+					mb_handshake_state = MBHandshakeState()
+					mb_handshake_state.set_server_sock(sock)
+					mb_handshake_state.set_client_sock(self.request)
+					mb_handshake_state.middleman()
+
 				else:
 					# send failed reply
 					failed_reply = b''
@@ -172,7 +178,12 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					succeeded_reply = succeeded_reply + chr(bind_port & 0x000000ff)
 					self.request.sendall(succeeded_reply)
 					# forward data
-					forward_data(self.request, sock)
+					#forward_data(self.request, sock)
+					mb_handshake_state = MBHandshakeState()
+					mb_handshake_state.set_server_sock(sock)
+					mb_handshake_state.set_client_sock(self.request)
+					mb_handshake_state.middleman()
+					
 				else:
 					# send failed reply
 					failed_reply = b''

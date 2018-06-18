@@ -46,8 +46,12 @@ class MBHandshakeState(object):
         self.encrypted_extensions = None
         self.server_cert_chain = None
         self.certificate = None # the decrypted certificate we received from server_connection
+        self.certificate_verify = None # the decrypted certificate verify we received from server_connection
+        self.server_finished = None
+        self.client_finished = None
+        self.server_psk = None # set this when we received server hello from server_connection
 
-    def set_server_sock(sock):
+    def set_server_sock(self, sock):
         """
         set the socket through which the middlebox connected with the tls 1.3 server
         also initializes self.server_connection
@@ -55,7 +59,7 @@ class MBHandshakeState(object):
         self.server_sock = sock
         self.server_connection = TLSConnection(sock)
 
-    def set_client_sock(sock):
+    def set_client_sock(self, sock):
         """
         set the socket through which the middlebox connected with the real tls 1.3 client
         also initializes self.client_connection
@@ -304,9 +308,13 @@ class MBHandshakeState(object):
             print 'get_client_hello: incorrect state'
             return
 
-        for result in self._getMsg(from_server = False, ContentType.handshake, HandshakeType.client_hello):
-            if result in (0,1): yield result
-            else: break
+        for result in self._getMsg(False, ContentType.handshake, HandshakeType.client_hello):
+            if result in (0,1):
+                #yield result
+                pass
+            else:
+                break
+        assert isinstance(result, ClientHello)
         client_hello = result
 
         # copy for calculating PSK binders
@@ -460,9 +468,12 @@ class MBHandshakeState(object):
             print 'get_server_hello: incorrect state'
             return
         
-        for result in self._getMsg(from_server = True, ContentType.handshake, HandshakeType.server_hello):
-            if result in (0,1): yield result
-            else: break
+        for result in self._getMsg(True, ContentType.handshake, HandshakeType.server_hello):
+            if result in (0,1):
+                pass
+            else:
+                break
+        assert isinstance(result, ServerHello)
         unknown_record = result
 
         hello_retry = None
@@ -787,7 +798,7 @@ class MBHandshakeState(object):
             settings.cipherImplementations)
 
         self.server_connection._changeReadState()
-        return (secret, cl_handshake_traffic_secret, sr_handshake_traffic_secret, prfName)
+        return (secret, cl_handshake_traffic_secret, sr_handshake_traffic_secret, prfName, prf_size)
 
     # we received decrypted ecnrypted extensions from server_connection
     # update hashes
@@ -923,6 +934,7 @@ class MBHandshakeState(object):
             # if server agreed to perform resumption, find the matching secret key
             serverHello = server_hello
             srPSK = serverHello.getExtension(ExtensionType.pre_shared_key)
+            self.server_psk = srPSK
             resuming = False
             if srPSK:
                 clPSK = clientHello.getExtension(ExtensionType.pre_shared_key)
@@ -972,7 +984,7 @@ class MBHandshakeState(object):
             # wait to receive encrypted extensions
             self.state = MB_STATE_WAIT_ENCRYPTED_EXTENSIONS
 
-            return (secret, prf_name)
+            return (secret, prf_name, prf_size)
 
     # we received decrypted encrypted extensions from server_connection
     # update hashes for client_connection
@@ -983,18 +995,16 @@ class MBHandshakeState(object):
     # we received decrypted certificate from server_connection
     # update hashes for client_connection
     # certificate is of type Certificate
-    def client_connection_handle_certificate(self, certificate, secret, prf_name):
+    def client_connection_handle_certificate(self, certificate):
         self.client_connection._handshake_hash.update(certificate.write())
-        return (secret, prf_name)
     
     # we received decrypted certificate verify from server_connection
     # update hashes for client connection
     # certificate_verify is of type CertificateVerify
-    def client_connection_handle_certificate_verify(self, certificate_verify, secret, prf_name):
+    def client_connection_handle_certificate_verify(self, certificate_verify, prf_name):
         self.client_connection._handshake_hash.digest(prf_name)
         # maybe we do not need the above
         self.client_connection._handshake_hash.update(certificate_verify.write())
-        return (secret, prf_name)
 
     # we received decrypted finished from server_connection
     # finished is of type Finished
@@ -1026,7 +1036,7 @@ class MBHandshakeState(object):
                                                bytearray(b'exp master'),
                                                self.client_connection._handshake_hash,
                                                prf_name)
-        return (secret, exporter_master_secret, prf_name)
+        return (secret, exporter_master_secret, cl_app_traffic, sr_app_traffic)
 
     # we received decrypted client finished from client_connection
     # finished is of type Finished
@@ -1081,6 +1091,12 @@ class MBHandshakeState(object):
         self.client_connection._changeReadState()
 
     def client_connection_handle_tickets(self, tickets):
+        # TODO
+        pass
+    
+    def server_connection_handle_tickets(self, tickets):
+        # TODO
+        pass
 
     def mb_cal_ec_priv_key_from_server_hello(self, server_hello):
         # we calculate ec private key here
@@ -1134,29 +1150,12 @@ class MBHandshakeState(object):
         # now calculate ec private key
         self.mb_ec_private_key = gen_private_key_for_middlebox(self.curve_name, self.alpha, self.prev_public_key)
 
-    def mb_hanlde_encrypted_extensions(self):
-
     def mb_handle_certificate_request(self):
         """
         if server send certificate request, it must follow encrypted extensions
         servers which are authenticating with a PSK MUST NOT send the certificate request
         """
         pass
-
-    def mb_handle_certificate(self):
-        """
-        this function is called when PSK is not used
-        """
-    def mb_handle_certificate_verify(self):
-        """
-        this function is called when PSK is not used
-        """
-
-    def mb_handle_server_finished(self):
-
-    def mb_handle_client_finished(self):
-
-    def mb_handle_application_data(self):
 
     def middleman(self):
         """
@@ -1171,18 +1170,76 @@ class MBHandshakeState(object):
             server_hello = self.retry_server_hello
         else:
             server_hello = self.server_hello
-        server_secret, server_cl_handshake_traffic_secret, server_sr_handshake_traffic_secret, server_prfName = self.server_connection_handle_server_hello(server_hello)
-        client_secret, client_prf_name = self.client_connection_handle_server_hello(server_hello)
+        server_secret, server_cl_handshake_traffic_secret, server_sr_handshake_traffic_secret, server_prf_name, server_prf_size = self.server_connection_handle_server_hello(server_hello)
+        client_secret, client_prf_name, client_prf_size = self.client_connection_handle_server_hello(server_hello)
         
         # now read encrypted extensions
-        for result in self._getMsg(from_server = True, ContentType.handshake, HandshakeType.encrypted_extensions):
-            if result in (0,1): yield result
-            else: break
+        for result in self._getMsg(True, ContentType.handshake, HandshakeType.encrypted_extensions):
+            if result in (0,1):
+                #yield result
+                pass
+            else:
+                break
+        assert isinstance(result, EncryptedExtensions)
         self.encrypted_extensions = result
         self.server_connection_handle_encrypted_extensions(self.encrypted_extensions)
         self.client_connection_handle_encrypted_extensions(self.encrypted_extensions)
 
         # now read certificate and certificate verify from server_connection
+        if not self.server_psk:
+            # psk is not used, now read certificate and certificate verify from server_connection
+            for result in self._getMsg(True, ContentType.handshake, HandshakeType.certificate, CertificateType.x509):
+                if result in (0, 1):
+                    #yield result
+                    pass
+                else:
+                    break
+
+            assert isinstance(result, Certificate)
+            self.certificate = result
+            self.server_connection_handle_certificate(self.certificate)
+            self.client_connection_handle_certificate(self.certificate)
+
+            # certificate verify
+            for result in self._getMsg(True, ContentType.handshake, HandshakeType.certificate_verify):
+                if result in (0, 1):
+                    #yield result
+                    pass
+                else:
+                    break
+            assert isinstance(result, CertificateVerify)
+            self.certificate_verify = result
+            self.server_connection_handle_certificate_verify(self.certificate_verify)
+            self.client_connection_handle_certificate_verify(self.certificate_verify, client_prf_name)
+        
+        # now read finished from server_connection
+        for result in self._getMsg(True, ContentType.handshake, HandshakeType.finished, server_prf_size):
+            if result in (0, 1):
+                #yield result
+                pass
+            else:
+                break
+        assert isinstance(result, Finished)
+        self.server_finished = result
+        server_finish_hs = self.server_connection_handle_server_finished(self.server_finished)
+        client_secret, client_exporter_master_secret, clieint_cl_app_traffic, client_sr_app_traffic = self.client_connection_handle_server_finished(self.server_finished, client_secret, client_prf_name)
+
+        # now read finished from client_connection
+        for result in self._getMsg(False, ContentType.handshake, HandshakeType.finished, client_prf_size):
+            if result in (0, 1):
+                #yield result
+                pass
+            else:
+                break
+        assert isinstance(result, Finished)
+        self.client_finished = result
+        self.server_connection_handle_client_finished(self.client_finished, server_secret, server_prf_size, server_prf_name, server_finish_hs, self.certificate)
+        self.client_connection_handle_client_finished(self.client_finished, client_secret, clieint_cl_app_traffic, client_sr_app_traffic, client_exporter_master_secret, client_prf_name)
+        
+        # now we should be able to read decrypted data from client_connection and server_connection
+        # still need to handle ticket
+
+
 
 def mb_get_settings(client_hello, sever_hello):
     """
