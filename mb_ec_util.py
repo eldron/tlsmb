@@ -8,6 +8,28 @@ from tlslite.utils.ecc import *
 from tlslite.utils.x25519 import *
 from tlslite.utils import tlshashlib
 
+def naive_genKeyShareEntry(group_id, version):
+    if group_id == GroupName.x25519:
+        priv = bytearray(32)
+        priv[31] = 2
+        share = x25519(priv, X25519_G)
+    elif group_id == GroupName.secp256r1 or group_id == GroupName.secp384r1 or group_id == GroupName.secp521r1:
+        priv = long(2)
+        if group_id == GroupName.secp256r1:
+            curve_name = 'secp256r1'
+        elif group_id == GroupName.secp384r1:
+            curve_name = 'secp384r1'
+        else:
+            curve_name = 'secp521r1'
+
+        curve = getCurveByName(curve_name)
+        share = encodeX962Point(curve.generator * priv)
+    else:
+        print 'naive_genKeyShareEntry: unexpected group id'
+
+    return KeyShareEntry().create(group_id, share, priv)
+
+
 def bytearray_to_long(array):
     value = long(0)
     tmp = long(1)
@@ -36,7 +58,7 @@ def gen_fake_private_key_for_client(curve_name, alpha, prev_private_key):
         if curve_name == 'x25519':
             # alpha and prev_private_key should be bytearray of length 32
             tmp = x25519(prev_private_key, X25519_G)
-            value = x25519(alpha, tmp);
+            value = x25519(alpha, tmp)
             # now value is g^a[n]^alpha
             # we hash value to 32 bytes as fake random private key
             sha = tlshashlib.sha256()

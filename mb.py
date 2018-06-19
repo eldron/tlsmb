@@ -126,11 +126,11 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					succeeded_reply = succeeded_reply + chr(bind_port & 0x000000ff)
 					self.request.sendall(succeeded_reply)
 					# forward data
-					#forward_data(self.request, sock)
-					mb_handshake_state = MBHandshakeState()
-					mb_handshake_state.set_server_sock(sock)
-					mb_handshake_state.set_client_sock(self.request)
-					mb_handshake_state.middleman()
+					forward_data(self.request, sock)
+					# mb_handshake_state = MBHandshakeState()
+					# mb_handshake_state.set_server_sock(sock)
+					# mb_handshake_state.set_client_sock(self.request)
+					# mb_handshake_state.middleman()
 
 				else:
 					# send failed reply
@@ -178,12 +178,12 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					succeeded_reply = succeeded_reply + chr(bind_port & 0x000000ff)
 					self.request.sendall(succeeded_reply)
 					# forward data
-					#forward_data(self.request, sock)
-					mb_handshake_state = MBHandshakeState()
-					mb_handshake_state.set_server_sock(sock)
-					mb_handshake_state.set_client_sock(self.request)
-					mb_handshake_state.middleman()
-					
+					forward_data(self.request, sock)
+					# mb_handshake_state = MBHandshakeState()
+					# mb_handshake_state.set_server_sock(sock)
+					# mb_handshake_state.set_client_sock(self.request)
+					# mb_handshake_state.middleman()
+
 				else:
 					# send failed reply
 					failed_reply = b''

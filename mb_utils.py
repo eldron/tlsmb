@@ -4,6 +4,10 @@ from tlslite.extensions import *
 from tlslite.utils.codec import *
 from tlslite import TLSConnection
 from tlslite.session import *
+from tlslite.tlsconnection import is_valid_hostname
+from tlslite.handshakehelpers import *
+
+from mb_ec_util import *
 
 MB_STATE_INITIAL_WAIT_CLIENT_HELLO = 0
 MB_STATE_INITIAL_WAIT_SERVER_HELLO = 1
@@ -16,6 +20,545 @@ MB_STATE_WAIT_CERTIFICATE = 7 # when PSK is not used
 MB_STATE_WAIT_CERTIFICATE_VERIFY = 8 # when PSK is not used
 MB_STATE_WAIT_SERVER_FINISHED = 9
 MB_STATE_WAIT_CLIENT_FINISHED = 10
+
+# functions for testing
+def fake_handshakeClientCert(connection, certChain=None, privateKey=None,
+                            session=None, settings=None, checker=None,
+                            nextProtos=None, reqTack=True, serverName=None,
+                            async_=False, alpn=None):
+        """Perform a certificate-based handshake in the role of client.
+
+        This function performs an SSL or TLS handshake.  The server
+        will authenticate itself using an X.509 certificate
+        chain.  If the handshake succeeds, the server's certificate
+        chain will be stored in the session's serverCertChain attribute.
+        Unless a checker object is passed in, this function does no
+        validation or checking of the server's certificate chain.
+
+        If the server requests client authentication, the
+        client will send the passed-in certificate chain, and use the
+        passed-in private key to authenticate itself.  If no
+        certificate chain and private key were passed in, the client
+        will attempt to proceed without client authentication.  The
+        server may or may not allow this.
+
+        If the function completes without raising an exception, the
+        TLS connection will be open and available for data transfer.
+
+        If an exception is raised, the connection will have been
+        automatically closed (if it was ever open).
+
+        :type certChain: ~tlslite.x509certchain.X509CertChain
+        :param certChain: The certificate chain to be used if the
+            server requests client authentication.
+
+        :type privateKey: ~tlslite.utils.rsakey.RSAKey
+        :param privateKey: The private key to be used if the server
+            requests client authentication.
+
+        :type session: ~tlslite.session.Session
+        :param session: A TLS session to attempt to resume.  If the
+            resumption does not succeed, a full handshake will be
+            performed.
+
+        :type settings: ~tlslite.handshakesettings.HandshakeSettings
+        :param settings: Various settings which can be used to control
+            the ciphersuites, certificate types, and SSL/TLS versions
+            offered by the client.
+
+        :type checker: ~tlslite.checker.Checker
+        :param checker: A Checker instance.  This instance will be
+            invoked to examine the other party's authentication
+            credentials, if the handshake completes succesfully.
+
+        :type nextProtos: list of str
+        :param nextProtos: A list of upper layer protocols ordered by
+            preference, to use in the Next-Protocol Negotiation Extension.
+
+        :type reqTack: bool
+        :param reqTack: Whether or not to send a "tack" TLS Extension,
+            requesting the server return a TackExtension if it has one.
+
+        :type serverName: string
+        :param serverName: The ServerNameIndication TLS Extension.
+
+        :type async_: bool
+        :param async_: If False, this function will block until the
+            handshake is completed.  If True, this function will return a
+            generator.  Successive invocations of the generator will
+            return 0 if it is waiting to read from the socket, 1 if it is
+            waiting to write to the socket, or will raise StopIteration if
+            the handshake operation is completed.
+
+        :type alpn: list of bytearrays
+        :param alpn: protocol names to advertise to server as supported by
+            client in the Application Layer Protocol Negotiation extension.
+            Example items in the array include b'http/1.1' or b'h2'.
+
+        :rtype: None or an iterable
+        :returns: If 'async_' is True, a generator object will be
+            returned.
+
+        :raises socket.error: If a socket error occurs.
+        :raises tlslite.errors.TLSAbruptCloseError: If the socket is closed
+            without a preceding alert.
+        :raises tlslite.errors.TLSAlert: If a TLS alert is signalled.
+        :raises tlslite.errors.TLSAuthenticationError: If the checker
+            doesn't like the other party's authentication credentials.
+        """
+        handshaker = \
+                fake_handshakeClientAsync(connection, certParams=(certChain, privateKey),
+                                           session=session, settings=settings,
+                                           checker=checker,
+                                           serverName=serverName,
+                                           nextProtos=nextProtos,
+                                           reqTack=reqTack,
+                                           alpn=alpn)
+        # The handshaker is a Python Generator which executes the handshake.
+        # It allows the handshake to be run in a "piecewise", asynchronous
+        # fashion, returning 1 when it is waiting to able to write, 0 when
+        # it is waiting to read.
+        #
+        # If 'async_' is True, the generator is returned to the caller,
+        # otherwise it is executed to completion here.
+        if async_:
+            return handshaker
+        for result in handshaker:
+            pass
+
+def fake_handshakeClientAsync(connection, srpParams=(), certParams=(), anonParams=(),
+                              session=None, settings=None, checker=None,
+                              nextProtos=None, serverName=None, reqTack=True,
+                              alpn=None):
+
+        handshaker = fake_handshakeClientAsyncHelper(connection, srpParams=srpParams,
+                certParams=certParams,
+                anonParams=anonParams,
+                session=session,
+                settings=settings,
+                serverName=serverName,
+                nextProtos=nextProtos,
+                reqTack=reqTack,
+                alpn=alpn)
+        for result in connection._handshakeWrapperAsync(handshaker, checker):
+            yield result
+
+def fake_handshakeClientAsyncHelper(connection, srpParams, certParams, anonParams,
+                               session, settings, serverName, nextProtos,
+                               reqTack, alpn):
+
+        connection._handshakeStart(client=True)
+
+        #Unpack parameters
+        srpUsername = None      # srpParams[0]
+        password = None         # srpParams[1]
+        clientCertChain = None  # certParams[0]
+        privateKey = None       # certParams[1]
+
+        # Allow only one of (srpParams, certParams, anonParams)
+        if srpParams:
+            assert(not certParams)
+            assert(not anonParams)
+            srpUsername, password = srpParams
+        if certParams:
+            assert(not srpParams)
+            assert(not anonParams)            
+            clientCertChain, privateKey = certParams
+        if anonParams:
+            assert(not srpParams)         
+            assert(not certParams)
+
+        #Validate parameters
+        if srpUsername and not password:
+            raise ValueError("Caller passed a username but no password")
+        if password and not srpUsername:
+            raise ValueError("Caller passed a password but no username")
+        if clientCertChain and not privateKey:
+            raise ValueError("Caller passed a cert_chain but no privateKey")
+        if privateKey and not clientCertChain:
+            raise ValueError("Caller passed a privateKey but no cert_chain")
+        if reqTack:
+            if not tackpyLoaded:
+                reqTack = False
+            if not settings or not settings.useExperimentalTackExtension:
+                reqTack = False
+        if nextProtos is not None:
+            if len(nextProtos) == 0:
+                raise ValueError("Caller passed no nextProtos")
+        if alpn is not None and not alpn:
+            raise ValueError("Caller passed empty alpn list")
+        # reject invalid hostnames but accept empty/None ones
+        if serverName and not is_valid_hostname(serverName):
+            raise ValueError("Caller provided invalid server host name: {0}"
+                             .format(serverName))
+
+        # Validates the settings and filters out any unsupported ciphers
+        # or crypto libraries that were requested        
+        if not settings:
+            settings = HandshakeSettings()
+        settings = settings.validate()
+        connection.sock.padding_cb = settings.padding_cb
+
+        if clientCertChain:
+            if not isinstance(clientCertChain, X509CertChain):
+                raise ValueError("Unrecognized certificate type")
+            if "x509" not in settings.certificateTypes:
+                raise ValueError("Client certificate doesn't match "\
+                                 "Handshake Settings")
+                                  
+        if session:
+            # session.valid() ensures session is resumable and has 
+            # non-empty sessionID
+            if not session.valid():
+                session = None #ignore non-resumable sessions...
+            elif session.resumable: 
+                if session.srpUsername != srpUsername:
+                    raise ValueError("Session username doesn't match")
+                if session.serverName != serverName:
+                    raise ValueError("Session servername doesn't match")
+
+        #Add Faults to parameters
+        if srpUsername and connection.fault == Fault.badUsername:
+            srpUsername += bytearray(b"GARBAGE")
+        if password and connection.fault == Fault.badPassword:
+            password += bytearray(b"GARBAGE")
+
+        # Tentatively set the client's record version.
+        # We'll use this for the ClientHello, and if an error occurs
+        # parsing the Server Hello, we'll use this version for the response
+        # in TLS 1.3 it always needs to be set to TLS 1.0
+        connection.version = \
+            (3, 1) if settings.maxVersion > (3, 3) else settings.maxVersion
+
+        # OK Start sending messages!
+        # *****************************
+
+        # Send the ClientHello.
+        for result in fake_clientSendClientHello(connection, settings, session, 
+                                        srpUsername, srpParams, certParams,
+                                        anonParams, serverName, nextProtos,
+                                        reqTack, alpn):
+            if result in (0,1): yield result
+            else: break
+        clientHello = result
+        
+        #Get the ServerHello.
+        for result in connection._clientGetServerHello(settings, session,
+                                                 clientHello):
+            if result in (0,1): yield result
+            else: break
+        serverHello = result
+        cipherSuite = serverHello.cipher_suite
+
+        # if we're doing tls1.3, use the new code as the negotiation is much
+        # different
+        ext = serverHello.getExtension(ExtensionType.supported_versions)
+        if ext and ext.version > (3, 3):
+            for result in connection._clientTLS13Handshake(settings, session,
+                                                     clientHello,
+                                                     serverHello):
+                if result in (0, 1):
+                    yield result
+                else:
+                    break
+            if result in ["finished", "resumed_and_finished"]:
+                connection._handshakeDone(resumed=(result == "resumed_and_finished"))
+                connection._serverRandom = serverHello.random
+                connection._clientRandom = clientHello.random
+                return
+            else:
+                raise Exception("unexpected return")
+
+        # Choose a matching Next Protocol from server list against ours
+        # (string or None)
+        nextProto = connection._clientSelectNextProto(nextProtos, serverHello)
+
+        # Check if server selected encrypt-then-MAC
+        if serverHello.getExtension(ExtensionType.encrypt_then_mac):
+            connection._recordLayer.encryptThenMAC = True
+
+        if serverHello.getExtension(ExtensionType.extended_master_secret):
+            connection.extendedMasterSecret = True
+
+        #If the server elected to resume the session, it is handled here.
+        for result in connection._clientResume(session, serverHello, 
+                        clientHello.random, 
+                        settings.cipherImplementations,
+                        nextProto):
+            if result in (0,1): yield result
+            else: break
+        if result == "resumed_and_finished":
+            connection._handshakeDone(resumed=True)
+            connection._serverRandom = serverHello.random
+            connection._clientRandom = clientHello.random
+            # alpn protocol is independent of resumption and renegotiation
+            # and needs to be negotiated every time
+            alpnExt = serverHello.getExtension(ExtensionType.alpn)
+            if alpnExt:
+                session.appProto = alpnExt.protocol_names[0]
+            return
+
+        #If the server selected an SRP ciphersuite, the client finishes
+        #reading the post-ServerHello messages, then derives a
+        #premasterSecret and sends a corresponding ClientKeyExchange.
+        if cipherSuite in CipherSuite.srpAllSuites:
+            keyExchange = SRPKeyExchange(cipherSuite, clientHello,
+                                         serverHello, None, None,
+                                         srpUsername=srpUsername,
+                                         password=password,
+                                         settings=settings)
+
+        #If the server selected an anonymous ciphersuite, the client
+        #finishes reading the post-ServerHello messages.
+        elif cipherSuite in CipherSuite.dhAllSuites:
+            keyExchange = DHE_RSAKeyExchange(cipherSuite, clientHello,
+                                             serverHello, None)
+
+        elif cipherSuite in CipherSuite.ecdhAllSuites:
+            acceptedCurves = connection._curveNamesToList(settings)
+            keyExchange = ECDHE_RSAKeyExchange(cipherSuite, clientHello,
+                                               serverHello, None,
+                                               acceptedCurves)
+
+        #If the server selected a certificate-based RSA ciphersuite,
+        #the client finishes reading the post-ServerHello messages. If 
+        #a CertificateRequest message was sent, the client responds with
+        #a Certificate message containing its certificate chain (if any),
+        #and also produces a CertificateVerify message that signs the 
+        #ClientKeyExchange.
+        else:
+            keyExchange = RSAKeyExchange(cipherSuite, clientHello,
+                                         serverHello, None)
+
+        # we'll send few messages here, send them in single TCP packet
+        connection.sock.buffer_writes = True
+        for result in connection._clientKeyExchange(settings, cipherSuite,
+                                              clientCertChain,
+                                              privateKey,
+                                              serverHello.certificate_type,
+                                              serverHello.tackExt,
+                                              clientHello.random,
+                                              serverHello.random,
+                                              keyExchange):
+            if result in (0, 1):
+                yield result
+            else: break
+        (premasterSecret, serverCertChain, clientCertChain,
+         tackExt) = result
+
+        #After having previously sent a ClientKeyExchange, the client now
+        #initiates an exchange of Finished messages.
+        # socket buffering is turned off in _clientFinished
+        for result in connection._clientFinished(premasterSecret,
+                            clientHello.random, 
+                            serverHello.random,
+                            cipherSuite, settings.cipherImplementations,
+                            nextProto):
+                if result in (0,1): yield result
+                else: break
+        masterSecret = result
+
+        # check if an application layer protocol was negotiated
+        alpnProto = None
+        alpnExt = serverHello.getExtension(ExtensionType.alpn)
+        if alpnExt:
+            alpnProto = alpnExt.protocol_names[0]
+
+        # Create the session object which is used for resumptions
+        connection.session = Session()
+        connection.session.create(masterSecret, serverHello.session_id, cipherSuite,
+                            srpUsername, clientCertChain, serverCertChain,
+                            tackExt, (serverHello.tackExt is not None),
+                            serverName,
+                            encryptThenMAC=connection._recordLayer.encryptThenMAC,
+                            extendedMasterSecret=connection.extendedMasterSecret,
+                            appProto=alpnProto)
+        connection._handshakeDone(resumed=False)
+        connection._serverRandom = serverHello.random
+        connection._clientRandom = clientHello.random
+
+def fake_clientSendClientHello(connection, settings, session, srpUsername,
+                                srpParams, certParams, anonParams,
+                                serverName, nextProtos, reqTack, alpn):
+        #Initialize acceptable ciphersuites
+        cipherSuites = [CipherSuite.TLS_EMPTY_RENEGOTIATION_INFO_SCSV]
+        if srpParams:
+            cipherSuites += CipherSuite.getSrpAllSuites(settings)
+        elif certParams:
+            cipherSuites += CipherSuite.getTLS13Suites(settings)
+            cipherSuites += CipherSuite.getEcdheCertSuites(settings)
+            cipherSuites += CipherSuite.getDheCertSuites(settings)
+            cipherSuites += CipherSuite.getCertSuites(settings)
+        elif anonParams:
+            cipherSuites += CipherSuite.getEcdhAnonSuites(settings)
+            cipherSuites += CipherSuite.getAnonSuites(settings)
+        else:
+            assert False
+
+        #Add any SCSVs. These are not real cipher suites, but signaling
+        #values which reuse the cipher suite field in the ClientHello.
+        wireCipherSuites = list(cipherSuites)
+        if settings.sendFallbackSCSV:
+            wireCipherSuites.append(CipherSuite.TLS_FALLBACK_SCSV)
+
+        #Initialize acceptable certificate types
+        certificateTypes = settings.getCertificateTypes()
+
+        extensions = []
+
+        #Initialize TLS extensions
+        if settings.useEncryptThenMAC:
+            extensions.append(TLSExtension().\
+                              create(ExtensionType.encrypt_then_mac,
+                                     bytearray(0)))
+        if settings.useExtendedMasterSecret:
+            extensions.append(TLSExtension().create(ExtensionType.
+                                                    extended_master_secret,
+                                                    bytearray(0)))
+        groups = []
+        #Send the ECC extensions only if we advertise ECC ciphers
+        if next((cipher for cipher in cipherSuites \
+                if cipher in CipherSuite.ecdhAllSuites), None) is not None:
+            groups.extend(connection._curveNamesToList(settings))
+            extensions.append(ECPointFormatsExtension().\
+                              create([ECPointFormat.uncompressed]))
+        # Advertise FFDHE groups if we have DHE ciphers
+        if next((cipher for cipher in cipherSuites
+                 if cipher in CipherSuite.dhAllSuites), None) is not None:
+            groups.extend(connection._groupNamesToList(settings))
+        # Send the extension only if it will be non empty
+        if groups:
+            extensions.append(SupportedGroupsExtension().create(groups))
+        # In TLS1.2 advertise support for additional signature types
+        if settings.maxVersion >= (3, 3):
+            sigList = connection._sigHashesToList(settings)
+            assert len(sigList) > 0
+            extensions.append(SignatureAlgorithmsExtension().\
+                              create(sigList))
+        # if we know any protocols for ALPN, advertise them
+        if alpn:
+            extensions.append(ALPNExtension().create(alpn))
+
+        session_id = bytearray()
+        # when TLS 1.3 advertised, add key shares, set fake session_id
+        if next((i for i in settings.versions if i > (3, 3)), None):
+            session_id = getRandomBytes(32)
+            extensions.append(SupportedVersionsExtension().
+                              create(settings.versions))
+
+            shares = []
+            for group_name in settings.keyShares:
+                group_id = getattr(GroupName, group_name)
+                if group_id == GroupName.x25519 or group_id == GroupName.secp256r1 or group_id == GroupName.secp384r1 or group_id == GroupName.secp521r1:
+                    key_share = naive_genKeyShareEntry(group_id, (3, 4))
+                else:
+                    key_share = connection._genKeyShareEntry(group_id, (3, 4))
+
+                shares.append(key_share)
+            # if TLS 1.3 is enabled, key_share must always be sent
+            # (unless only static PSK is used)
+            extensions.append(ClientKeyShareExtension().create(shares))
+
+            # add info on types of PSKs supported (also used for
+            # NewSessionTicket so send basically always)
+            ext = PskKeyExchangeModesExtension().create(
+                [PskKeyExchangeMode.psk_ke, PskKeyExchangeMode.psk_dhe_ke])
+            extensions.append(ext)
+
+        # don't send empty list of extensions or extensions in SSLv3
+        if not extensions or settings.maxVersion == (3, 0):
+            extensions = None
+
+        sent_version = min(settings.maxVersion, (3, 3))
+
+        #Either send ClientHello (with a resumable session)...
+        if session and session.sessionID:
+            #If it's resumable, then its
+            #ciphersuite must be one of the acceptable ciphersuites
+            if session.cipherSuite not in cipherSuites:
+                raise ValueError("Session's cipher suite not consistent "\
+                                 "with parameters")
+            else:
+                clientHello = ClientHello()
+                clientHello.create(sent_version, getRandomBytes(32),
+                                   session.sessionID, wireCipherSuites,
+                                   certificateTypes, 
+                                   session.srpUsername,
+                                   reqTack, nextProtos is not None,
+                                   session.serverName,
+                                   extensions=extensions)
+
+        #Or send ClientHello (without)
+        else:
+            clientHello = ClientHello()
+            clientHello.create(sent_version, getRandomBytes(32),
+                               session_id, wireCipherSuites,
+                               certificateTypes, 
+                               srpUsername,
+                               reqTack, nextProtos is not None, 
+                               serverName,
+                               extensions=extensions)
+
+        # Check if padding extension should be added
+        # we want to add extensions even when using just SSLv3
+        if settings.usePaddingExtension:
+            HandshakeHelpers.alignClientHelloPadding(clientHello)
+
+        # because TLS 1.3 PSK is sent in ClientHello and signs the ClientHello
+        # we need to send it as the last extension
+        if (settings.pskConfigs or (session and session.tickets)) \
+                and settings.maxVersion >= (3, 4):
+            ext = PreSharedKeyExtension()
+            idens = []
+            binders = []
+            # if we have a previous session, include it in PSKs too
+            if session and session.tickets:
+                now = time.time()
+                # clean the list from obsolete ones
+                # RFC says that the tickets MUST NOT be cached longer than
+                # 7 days
+                session.tickets[:] = (i for i in session.tickets if
+                                      i.time + i.ticket_lifetime > now and
+                                      i.time + 7 * 24 * 60 * 60 > now)
+                if session.tickets:
+                    ticket = session.tickets[0]
+
+                    ticket_time = int(ticket.time + ticket.ticket_age_add) \
+                        % 2**32
+                    idens.append(PskIdentity().create(ticket.ticket,
+                                                      ticket_time))
+                    binder_len = 48 if session.cipherSuite in \
+                        CipherSuite.sha384PrfSuites else 32
+                    binders.append(bytearray(binder_len))
+            for psk in settings.pskConfigs:
+                # skip PSKs with no identities as they're TLS1.3 incompatible
+                if not psk[0]:
+                    continue
+                idens.append(PskIdentity().create(psk[0], 0))
+                psk_hash = psk[2] if len(psk) > 2 else 'sha256'
+                assert psk_hash in set(['sha256', 'sha384'])
+                # create fake binder values to create correct length fields
+                binders.append(bytearray(32 if psk_hash == 'sha256' else 48))
+
+            if idens:
+                ext.create(idens, binders)
+                clientHello.extensions.append(ext)
+
+                # for HRR case we'll need 1st CH and HRR in handshake hashes,
+                # so pass them in, truncated CH will be added by the helpers to
+                # the copy of the hashes
+                HandshakeHelpers.update_binders(clientHello,
+                                                connection._handshake_hash,
+                                                settings.pskConfigs,
+                                                session.tickets if session
+                                                else None,
+                                                session.resumptionMasterSecret
+                                                if session else None)
+
+        for result in connection._sendMsg(clientHello):
+            yield result
+        yield clientHello
+
 
 class MBHandshakeState(object):
     def __init__(self):
@@ -329,7 +872,7 @@ class MBHandshakeState(object):
         else:
             self.retry_client_hello = client_hello
                 
-        self.settings = mb_get_settings(self.client_hello)
+        self.settings = mb_get_settings(client_hello, None)
         self.session = mb_get_resumable_session(self.client_hello)
         # we need to set session for client_connection and server_connection
         self.client_connection.session = self.session
@@ -367,7 +910,7 @@ class MBHandshakeState(object):
 
             # we may should update hashes for client_connection
             # find how server handles HRR
-            prf_name, prf_size = self.client_connection._getPRFParams(cipherSuite)
+            prf_name, prf_size = self.client_connection._getPRFParams(hello_retry.cipher_suite)
 
             client_hello_hash = self.client_connection._handshake_hash.digest(prf_name)
             self.client_connection._handshake_hash = HandshakeHashes()
@@ -384,6 +927,11 @@ class MBHandshakeState(object):
             self.get_server_hello()
 
     def check_server_hello(self, server_hello, real_version):
+        if self.retry_client_hello:
+            client_hello = self.retry_client_hello
+        else:
+            client_hello = self.client_hello
+            
         # check server hello
         if self.client_hello_retry_request and self.client_hello_retry_request.cipher_suite != server_hello.cipher_suite:
             print 'hello_retry.cipher_suit != server_hello.cipher_suit'
@@ -551,7 +1099,7 @@ class MBHandshakeState(object):
                 # the msg is already plaintext, we ahve sent the cipher text to the other party
                 # if this is a CCS message in TLS 1.3, sanity check and
                 # continue
-                if self.version > (3, 3) and \
+                if connection.version > (3, 3) and \
                         ContentType.handshake in expectedType and \
                         recordHeader.type == ContentType.change_cipher_spec:
                     # in fact we should not receive CCS here
@@ -817,7 +1365,7 @@ class MBHandshakeState(object):
     # we received decrypted finished from server_connection
     def server_connection_handle_server_finished(self, finished):
         self.server_connection._handshake_hash.update(finished.write())
-        server_finish_hs = self._handshake_hash.copy()
+        server_finish_hs = self.server_connection._handshake_hash.copy()
         self.server_connection._changeWriteState()
         return server_finish_hs
 
@@ -957,7 +1505,7 @@ class MBHandshakeState(object):
             if psk is None:
                 psk = bytearray(prf_size)
 
-            kex = connection._getKEX(selected_group, version)
+            kex = connection._getKEX(selected_group, self.client_connection.version)
             key_share = server_hello.getExtension(ExtensionType.key_share).server_share# we read key share form server hello
             Z = kex.calc_shared_key(self.mb_ec_private_key, key_share.key_exchange) # calculate ec key
             # Early secret
@@ -1008,7 +1556,7 @@ class MBHandshakeState(object):
 
     # we received decrypted finished from server_connection
     # finished is of type Finished
-    def client_connection_handle_server_finished(self, finished, secret, prf_name):
+    def client_connection_handle_server_finished(self, finished, secret, prf_name, prf_size):
         settings = self.settings
         self.client_connection._handshake_hash.digest(prf_name)
         # maybe we do not need the above
@@ -1024,6 +1572,11 @@ class MBHandshakeState(object):
                                        self.client_connection._handshake_hash, prf_name)
         sr_app_traffic = derive_secret(secret, bytearray(b's ap traffic'),
                                        self.client_connection._handshake_hash, prf_name)
+
+        if self.retry_server_hello:
+            server_hello = self.retry_server_hello
+        else:
+            server_hello = self.server_hello
         self.client_connection._recordLayer.calcTLS1_3PendingState(server_hello.cipher_suite,
                                                  cl_app_traffic,
                                                  sr_app_traffic,
@@ -1222,7 +1775,7 @@ class MBHandshakeState(object):
         assert isinstance(result, Finished)
         self.server_finished = result
         server_finish_hs = self.server_connection_handle_server_finished(self.server_finished)
-        client_secret, client_exporter_master_secret, clieint_cl_app_traffic, client_sr_app_traffic = self.client_connection_handle_server_finished(self.server_finished, client_secret, client_prf_name)
+        client_secret, client_exporter_master_secret, clieint_cl_app_traffic, client_sr_app_traffic = self.client_connection_handle_server_finished(self.server_finished, client_secret, client_prf_name, client_prf_size)
 
         # now read finished from client_connection
         for result in self._getMsg(False, ContentType.handshake, HandshakeType.finished, client_prf_size):
@@ -1271,16 +1824,6 @@ def mb_get_resumable_session(client_hello):
     # read from file and retrun
     # return None for now
     return None
-
-# def mb_get_connection(client_hello):
-#     """
-#     return constructed TLSConnection from client hello
-#     client_hello: input, of type ClientHello
-#     """
-#     settings = mb_get_settings(client_hello, None)
-#     connection = TLSConnection(None)
-#     connection._handshake_hash.update(client_hello.write())
-#     return connection
     
 def mb_get_server_hello(connection, settings, session, client_hello, server_hello):
     """
@@ -1289,22 +1832,22 @@ def mb_get_server_hello(connection, settings, session, client_hello, server_hell
     client_hello_hash = connection._handshake_hash.copy()
     connection._handshake_hash.update(server_hello.write())
 
-if __name__ == '__main__':
-    file = open('client_hello.raw', 'r')
-    data = file.read()
-    client_hello = mb_set_client_hello(bytearray(data))
-    write_data = client_hello.write()
-    if write_data == data[5:]:
-        print 'mb_get_client_hello succeeded'
-    else:
-        print 'mb_get_client_hello failed'
+# if __name__ == '__main__':
+#     file = open('client_hello.raw', 'r')
+#     data = file.read()
+#     client_hello = mb_set_client_hello(bytearray(data))
+#     write_data = client_hello.write()
+#     if write_data == data[5:]:
+#         print 'mb_get_client_hello succeeded'
+#     else:
+#         print 'mb_get_client_hello failed'
 
-    file.close()
-    file = open('server_hello.raw', 'r')
-    data = file.read()
-    server_hello = mb_set_server_hello(bytearray(data))
-    write_data = server_hello.write()
-    if write_data == data[5:]:
-        print 'mb_set_server_hello succeeded'
-    else:
-        print 'mb_set_server_hello failed'
+#     file.close()
+#     file = open('server_hello.raw', 'r')
+#     data = file.read()
+#     server_hello = mb_set_server_hello(bytearray(data))
+#     write_data = server_hello.write()
+#     if write_data == data[5:]:
+#         print 'mb_set_server_hello succeeded'
+#     else:
+#         print 'mb_set_server_hello failed'
