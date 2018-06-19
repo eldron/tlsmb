@@ -127,6 +127,8 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					self.request.sendall(succeeded_reply)
 					# forward data
 					#forward_data(self.request, sock)
+					self.request.setblocking(False)
+					sock.setblocking(False)
 					mb_handshake_state = MBHandshakeState()
 					mb_handshake_state.set_server_sock(sock)
 					mb_handshake_state.set_client_sock(self.request)
@@ -179,6 +181,8 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					self.request.sendall(succeeded_reply)
 					# forward data
 					#forward_data(self.request, sock)
+					self.request.setblocking(False)
+					sock.setblocking(False)
 					mb_handshake_state = MBHandshakeState()
 					mb_handshake_state.set_server_sock(sock)
 					mb_handshake_state.set_client_sock(self.request)

@@ -6,6 +6,7 @@ from tlslite import TLSConnection
 from tlslite.session import *
 from tlslite.tlsconnection import is_valid_hostname
 from tlslite.handshakehelpers import *
+import selectors2 as selectors
 
 from mb_ec_util import *
 
@@ -604,6 +605,7 @@ class MBHandshakeState(object):
         self.certificate_verify_parser = None
         self.server_finished_parser = None
         self.client_finished_parser = None
+        self.resuming = False
 
     def set_server_sock(self, sock):
         """
@@ -967,16 +969,6 @@ class MBHandshakeState(object):
 
         self.settings.minVersion = real_version
         self.settings.maxVersion = real_version
-        # we set settings according to server hello            
-        # if real_version < self.settings.minVersion:
-        #     print 'real_version < settings.minVersion'
-        #     print 'this should not happen'
-        #     return False
-
-        # if real_version > self.settings.maxVersion:
-        #     print 'real_version > settings.maxVersion'
-        #     print 'this should not happen'
-        #     return False
 
         cipherSuites = CipherSuite.filterForVersion(self.client_hello.cipher_suites, minVersion=real_version, maxVersion=real_version)
         if server_hello.cipher_suite not in cipherSuites:
@@ -1110,8 +1102,8 @@ class MBHandshakeState(object):
     #   get certificate from server_connection
     #   get certificate verify from server_connection
     #   get finished from server_connection and client_connection
-    # handshake hashes for connection are not automatically updated
-    # for handshake messages, we yield for example (client_hello, parser)
+    # handshake hashes for connection are not automatically updated, except for new session ticket
+    # for handshake messages, we yield for example (client_hello, parser), except for new session ticket
     def _getMsg(self, from_server, expectedType, secondaryType=None, constructorType=None):
         if from_server:
             connection = self.server_connection
@@ -1247,7 +1239,10 @@ class MBHandshakeState(object):
                 elif subType == HandshakeType.encrypted_extensions:
                     yield (EncryptedExtensions().parse(p), p)
                 elif subType == HandshakeType.new_session_ticket:
-                    yield (NewSessionTicket().parse(p), p)
+                    # update hashes
+                    self.client_connection._handshake_hash.update(p.bytes)
+                    self.server_connection._handshake_hash.update(p.bytes)
+                    yield NewSessionTicket().parse(p)
                 else:
                     raise AssertionError()
 
@@ -1307,7 +1302,7 @@ class MBHandshakeState(object):
 
         # if server agreed to perform resumption, find the matching secret key
         srPSK = serverHello.getExtension(ExtensionType.pre_shared_key)
-        resuming = False
+        self.resuming = False
         if srPSK:
             print 'server hello has psk extension'
             clPSK = clientHello.getExtension(ExtensionType.pre_shared_key)
@@ -1316,7 +1311,7 @@ class MBHandshakeState(object):
             if psk:
                 psk = psk[0]
             else:
-                resuming = True
+                self.resuming = True
                 psk = HandshakeHelpers.calc_res_binder_psk(
                     ident, session.resumptionMasterSecret,
                     session.tickets)
@@ -1458,6 +1453,10 @@ class MBHandshakeState(object):
                             resumptionMasterSecret=resumption_master_secret,
                             # NOTE it must be a reference, not a copy!
                             tickets=self.server_connection.tickets)
+
+        self.server_connection._handshakeDone(self.resuming)
+        self._serverRandom = serverHello.random
+        self._clientRandom = clientHello.random
 
     # needs to figure out settings, session and session cache
     
@@ -1664,6 +1663,7 @@ class MBHandshakeState(object):
         # switch to application_traffic_secret
         self.client_connection._changeWriteState()
         self.client_connection._changeReadState()
+        self.client_connection._handshakeDone(self.resuming)
 
     def client_connection_handle_tickets(self, tickets):
         # TODO
@@ -1746,6 +1746,95 @@ class MBHandshakeState(object):
         servers which are authenticating with a PSK MUST NOT send the certificate request
         """
         pass
+
+    # we need to implement our own read function
+    def read(self, from_server, max=None, min=1):
+        """Read some data from the TLS connection.
+
+        This function will block until at least 'min' bytes are
+        available (or the connection is closed).
+
+        If an exception is raised, the connection will have been
+        automatically closed.
+
+        :type max: int
+        :param max: The maximum number of bytes to return.
+
+        :type min: int
+        :param min: The minimum number of bytes to return
+
+        :rtype: str
+        :returns: A string of no more than 'max' bytes, and no fewer
+            than 'min' (unless the connection has been closed, in which
+            case fewer than 'min' bytes may be returned).
+
+        :raises socket.error: If a socket error occurs.
+        :raises tlslite.errors.TLSAbruptCloseError: If the socket is closed
+            without a preceding alert.
+        :raises tlslite.errors.TLSAlert: If a TLS alert is signalled.
+        """
+        for result in self.readAsync(from_server, max, min):
+            pass
+        return result
+
+    def readAsync(self, from_server, max=None, min=1):
+        """Start a read operation on the TLS connection.
+
+        This function returns a generator which behaves similarly to
+        read().  Successive invocations of the generator will return 0
+        if it is waiting to read from the socket, 1 if it is waiting
+        to write to the socket, or a string if the read operation has
+        completed.
+
+        :rtype: iterable
+        :returns: A generator; see above for details.
+        """
+        if from_server:
+            connection = self.server_connection
+        else:
+            connection = self.client_connection
+        
+        if connection.version > (3, 3):
+            allowedTypes = (ContentType.application_data,
+                            ContentType.handshake)
+            allowedHsTypes = HandshakeType.new_session_ticket
+        else:
+            allowedTypes = ContentType.application_data
+            allowedHsTypes = None
+        try:
+            while len(connection._readBuffer) < min and not connection.closed:
+                try:
+                    # we call our own getMsg function here
+                    for result in self._getMsg(from_server, allowedTypes,
+                                               allowedHsTypes):
+                        if result in (0, 1):
+                            yield result
+                    if isinstance(result, NewSessionTicket):
+                        result.time = time.time()
+                        connection.tickets.append(result)
+                        continue
+                    applicationData = result
+                    connection._readBuffer += applicationData.write()
+                except TLSRemoteAlert as alert:
+                    if alert.description != AlertDescription.close_notify:
+                        raise
+                except TLSAbruptCloseError:
+                    if not connection.ignoreAbruptClose:
+                        raise
+                    else:
+                        connection._shutdown(True)
+
+            if max == None:
+                max = len(connection._readBuffer)
+
+            returnBytes = connection._readBuffer[:max]
+            connection._readBuffer = connection._readBuffer[max:]
+            yield bytes(returnBytes)
+        except GeneratorExit:
+            raise
+        except:
+            connection._shutdown(False)
+            raise
 
     def middleman(self):
         """
@@ -1870,7 +1959,21 @@ class MBHandshakeState(object):
         self.client_connection_handle_client_finished(self.client_finished, client_secret, clieint_cl_app_traffic, client_sr_app_traffic, client_exporter_master_secret, client_prf_name)
         
         # now we should be able to read decrypted data from client_connection and server_connection
-        # still need to handle ticket
+        # new session ticket is handled in our read function
+        sel = selectors.DefaultSelector()
+        sel.register(self.client_sock, selectors.EVENT_READ)
+        sel.register(self.server_sock, selectors.EVENT_READ)
+        while True:
+            events = sel.select()
+            for key, mask in events:
+                if key.fileobj == self.client_sock:
+                    data = self.read(False)
+                    print 'received from client:'
+                    print data
+                else:
+                    data = self.read(True)
+                    print 'received from server:'
+                    print data
 
 
 
