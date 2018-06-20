@@ -1156,6 +1156,8 @@ class MBHandshakeState(object):
                     #If we received a renegotiation attempt...
                     if recordHeader.type == ContentType.handshake:
                         print 'renegotiation attempt'
+
+                    yield 0
                         
 
                 #If this is an empty application-data fragment, try again
@@ -1173,6 +1175,12 @@ class MBHandshakeState(object):
             elif recordHeader.type == ContentType.alert:
                 yield Alert().parse(p)
             elif recordHeader.type == ContentType.application_data:
+                if from_server:
+                    print 'getMsg: received application data from server_connection:'
+                    print p.bytes
+                else:
+                    print 'getMsg: received application data from client_connection:'
+                    print p.bytes
                 yield ApplicationData().parse(p)
             elif recordHeader.type == ContentType.handshake:
                 #Convert secondaryType to tuple, if it isn't already
@@ -1458,6 +1466,18 @@ class MBHandshakeState(object):
         self._serverRandom = serverHello.random
         self._clientRandom = clientHello.random
 
+        # print traffic keys
+        print 'server_connection_handle_client_finished print begin:'
+        print 'cl_app_traffic is:'
+        print binascii.hexlify(cl_app_traffic)
+        print 'sr_app_traffic is:'
+        print binascii.hexlify(sr_app_traffic)
+        print 'exporter_master_secret is:'
+        print binascii.hexlify(exporter_master_secret)
+        print 'resumption_master_secret is:'
+        print binascii.hexlify(resumption_master_secret)
+        print 'server_connection_handle_client_finished print end'
+
     # needs to figure out settings, session and session cache
     
     def client_connection_handle_server_hello(self, server_hello, parser):
@@ -1664,14 +1684,25 @@ class MBHandshakeState(object):
         self.client_connection._changeWriteState()
         self.client_connection._changeReadState()
         self.client_connection._handshakeDone(self.resuming)
-
-    def client_connection_handle_tickets(self, tickets):
-        # TODO
-        pass
+        
+        # print traffic keys
+        print 'client_connection_handle_client_finished print begin:'
+        print 'cl_app_traffic is:'
+        print binascii.hexlify(cl_app_traffic)
+        print 'sr_app_traffic is:'
+        print binascii.hexlify(sr_app_traffic)
+        print 'exporter_master_secret is:'
+        print binascii.hexlify(exporter_master_secret)
+        print 'resumption_master_secret is:'
+        print binascii.hexlify(resumption_master_secret)
+        print 'client_connection_handle_client_finished print end'
+    # def client_connection_handle_tickets(self, tickets):
+    #     # TODO
+    #     pass
     
-    def server_connection_handle_tickets(self, tickets):
-        # TODO
-        pass
+    # def server_connection_handle_tickets(self, tickets):
+    #     # TODO
+    #     pass
 
     def mb_cal_ec_priv_key_from_server_hello(self, server_hello):
         # we calculate ec private key here
@@ -1776,6 +1807,51 @@ class MBHandshakeState(object):
         for result in self.readAsync(from_server, max, min):
             pass
         return result
+
+    def read_async(self, from_server):
+        if from_server:
+            connection = self.server_connection
+        else:
+            connection = self.client_connection
+        
+        if connection.version > (3, 3):
+            allowedTypes = (ContentType.application_data, ContentType.handshake)
+            allowedHsTypes = HandshakeType.new_session_ticket
+        else:
+            print 'read_async: version is not correct, this should not happen'
+            allowedTypes = ContentType.application_data
+            allowedHsTypes = None
+        if not connection.closed:
+            try:
+                for result in self._getMsg(from_server, allowedTypes, allowedHsTypes):
+                    if result in (0, 1):
+                        return result
+                    
+                if isinstance(result, NewSessionTicket):
+                    result.time = time.time()
+                    connection.tickets.append(result)
+                    return 2
+
+                applicationData = result
+                connection._readBuffer += applicationData.write()
+                max = len(connection._readBuffer)
+                returnBytes = connection._readBuffer[:max]
+                connection._readBuffer = connection._readBuffer[max:]
+                return bytes(returnBytes)
+            except TLSRemoteAlert as alert:
+                if alert.description != AlertDescription.close_notify:
+                    raise
+            except TLSAbruptCloseError:
+                if not connection.ignoreAbruptClose:
+                    raise
+                else:
+                    connection._shutdown(True)
+            except:
+                print 'exception happened'
+        else:
+            print 'connection is already closed'
+            return 3
+
 
     def readAsync(self, from_server, max=None, min=1):
         """Start a read operation on the TLS connection.
@@ -1936,7 +2012,7 @@ class MBHandshakeState(object):
         self.server_finished = result
         self.server_finished_parser = parser
         print 'received server finished is:'
-        print self.server_finished
+        print_finished(self.server_finished)
 
         server_finish_hs = self.server_connection_handle_server_finished(self.server_finished)
         client_secret, client_exporter_master_secret, clieint_cl_app_traffic, client_sr_app_traffic = self.client_connection_handle_server_finished(self.server_finished, client_secret, client_prf_name, client_prf_size)
@@ -1953,7 +2029,7 @@ class MBHandshakeState(object):
         self.client_finished = result
         self.client_finished_parser = parser
         print 'received client finished is:'
-        print self.client_finished
+        print_finished(self.client_finished)
 
         self.server_connection_handle_client_finished(self.client_finished, server_secret, server_prf_size, server_prf_name, server_finish_hs, self.certificate)
         self.client_connection_handle_client_finished(self.client_finished, client_secret, clieint_cl_app_traffic, client_sr_app_traffic, client_exporter_master_secret, client_prf_name)
@@ -1967,13 +2043,34 @@ class MBHandshakeState(object):
             events = sel.select()
             for key, mask in events:
                 if key.fileobj == self.client_sock:
-                    data = self.read(False)
-                    print 'received from client:'
-                    print data
+                    print 'to read data from client sock'
+                    result = self.read_async(False)
+                    if result in (0, 1):
+                        pass
+                    elif result == 2:
+                        print 'received new session ticket from client'
+                        print 'this should not happen'
+                    elif result == 3:
+                        'print client_connection closed'
+                    else:
+                        print 'type of result is:'
+                        print type(result)
+                        print 'received application data from client_connection:'
+                        print result
                 else:
-                    data = self.read(True)
-                    print 'received from server:'
-                    print data
+                    print 'to read data from server sock'
+                    result = self.read_async(True)
+                    if result in(0, 1):
+                        pass
+                    elif result == 2:
+                        print 'received new session ticket from server_connection'
+                    elif result == 3:
+                        print 'server_connection closed'
+                    else:
+                        print 'type of result is:'
+                        print type(result)
+                        print 'received application data from server_connection:'
+                        print result
 
 
 
@@ -2007,6 +2104,28 @@ def mb_get_resumable_session(client_hello):
     # read from file and retrun
     # return None for now
     return None
+
+def print_new_session_ticket(ticket):
+    print 'ticket_lifetime is:'
+    print ticket.ticket_lifetime
+    print 'ticket_age_add is:'
+    print ticket.ticket_age_add
+    print 'ticket nonce is:'
+    print ticket.ticket_nonce
+    print 'ticket is:'
+    print ticket.ticket
+    print 'extensions is:'
+    print ticket.extensions
+
+def print_finished(finished):
+    print 'version is:'
+    print finished.version
+    print 'verify data is:'
+    print binascii.hexlify(finished.verify_data)
+    print 'hash length is:'
+    print finished.hash_length
+
+
 
 # if __name__ == '__main__':
 #     file = open('client_hello.raw', 'r')

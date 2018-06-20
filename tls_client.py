@@ -50,7 +50,14 @@ if __name__ == '__main__':
             # now use sock to establish TLS 1.3 connection with the remote server
             connection = TLSConnection(sock)
             mb_utils.fake_handshakeClientCert(connection)
-            connection.write('hello tls server')
-            data = connection.read(1024)
-            print(data)
-            connection.close()
+            # 2 \r\n
+            connection.send("GET / HTTP/1.0\r\n\r\n")
+            r = connection.recv(10240)
+            if r in (0, 1):
+                print 'received 0 or 1'
+            elif isinstance(r, str):
+                print 'received from server:'
+                print r
+            else:
+                print 'fuck'
+            #connection.close()
