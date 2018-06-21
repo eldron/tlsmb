@@ -846,14 +846,12 @@ class MBHandshakeState(object):
                     (connection.version > (3, 3) and
                      header.type == ContentType.change_cipher_spec):
                 #yield (header, parser)
-                # we do not yield change cipher spec
-                # send change cipher spec to the other party
-                # if from_server:
-                #     self.client_sock.write(header.write() + parser.bytes)
-                # else:
-                #     self.server_sock.write(header.write() + parser.bytes)
-                print 'received change cipher spec'
-                pass
+                
+                if from_server:
+                    print 'getNextRecord: received change cipher spec from server'
+                else:
+                    print 'getNextRecord: received change cipher spec from client'
+                yield (header, parser)
             # If it's an SSLv2 ClientHello, we can return it as well, since
             # it's the only ssl2 type we support
             elif header.ssl2:
@@ -1103,7 +1101,7 @@ class MBHandshakeState(object):
     #   get certificate verify from server_connection
     #   get finished from server_connection and client_connection
     # handshake hashes for connection are not automatically updated, except for new session ticket
-    # for handshake messages, we yield for example (client_hello, parser), except for new session ticket
+    # for handshake messages, we yield for example (client_hello, parser),
     def _getMsg(self, from_server, expectedType, secondaryType=None, constructorType=None):
         if from_server:
             connection = self.server_connection
@@ -1134,8 +1132,6 @@ class MBHandshakeState(object):
                 if connection.version > (3, 3) and \
                         ContentType.handshake in expectedType and \
                         recordHeader.type == ContentType.change_cipher_spec:
-                    # in fact we should not receive CCS here
-                    print '_getMsg: received CCS, this should not happen'
                     # ccs = ChangeCipherSpec().parse(p)
                     # if ccs.type != 1:
                     #     for result in self._sendError(
@@ -1151,6 +1147,7 @@ class MBHandshakeState(object):
                     #If we received an alert...
                     if recordHeader.type == ContentType.alert:
                         print 'getMsg: received alert'
+                        print p.bytes
                         
 
                     #If we received a renegotiation attempt...
@@ -1163,7 +1160,8 @@ class MBHandshakeState(object):
                 #If this is an empty application-data fragment, try again
                 if recordHeader.type == ContentType.application_data:
                     if p.index == len(p.bytes):
-                        continue
+                        yield 0 # if we received 0-length application data
+                        #continue
 
                 break
 
@@ -1171,9 +1169,9 @@ class MBHandshakeState(object):
 
             #Parse based on content_type
             if recordHeader.type == ContentType.change_cipher_spec:
-                yield ChangeCipherSpec().parse(p)
+                yield (ChangeCipherSpec().parse(p), p)
             elif recordHeader.type == ContentType.alert:
-                yield Alert().parse(p)
+                yield (Alert().parse(p), p)
             elif recordHeader.type == ContentType.application_data:
                 if from_server:
                     print 'getMsg: received application data from server_connection:'
@@ -1181,7 +1179,7 @@ class MBHandshakeState(object):
                 else:
                     print 'getMsg: received application data from client_connection:'
                     print p.bytes
-                yield ApplicationData().parse(p)
+                yield (ApplicationData().parse(p), p)
             elif recordHeader.type == ContentType.handshake:
                 #Convert secondaryType to tuple, if it isn't already
                 if not isinstance(secondaryType, tuple):
@@ -1250,13 +1248,17 @@ class MBHandshakeState(object):
                     # update hashes
                     self.client_connection._handshake_hash.update(p.bytes)
                     self.server_connection._handshake_hash.update(p.bytes)
-                    yield NewSessionTicket().parse(p)
+                    #print_new_session_ticket(NewSessionTicket().parse(p))
+                    ticket = NewSessionTicket().parse(p)
+                    print_new_session_ticket(ticket)
+                    yield (ticket, p)
                 else:
                     raise AssertionError()
 
         #If an exception was raised by a Parser or Message instance:
         except SyntaxError as e:
             print 'an exception was raised by a Parser or Message instance'
+            print formatExceptionTrace(e)
             yield 0
             # for result in self._sendError(AlertDescription.decode_error,
             #                              formatExceptionTrace(e)):
@@ -2036,41 +2038,147 @@ class MBHandshakeState(object):
         
         # now we should be able to read decrypted data from client_connection and server_connection
         # new session ticket is handled in our read function
-        sel = selectors.DefaultSelector()
-        sel.register(self.client_sock, selectors.EVENT_READ)
-        sel.register(self.server_sock, selectors.EVENT_READ)
+
+        allowedTypes = (ContentType.application_data, ContentType.handshake, ContentType.alert, ContentType.change_cipher_spec)
+        allowedHsTypes = HandshakeType.new_session_ticket
+        
         while True:
-            events = sel.select()
-            for key, mask in events:
-                if key.fileobj == self.client_sock:
-                    print 'to read data from client sock'
-                    result = self.read_async(False)
-                    if result in (0, 1):
-                        pass
-                    elif result == 2:
-                        print 'received new session ticket from client'
-                        print 'this should not happen'
-                    elif result == 3:
-                        'print client_connection closed'
-                    else:
-                        print 'type of result is:'
-                        print type(result)
-                        print 'received application data from client_connection:'
-                        print result
+            if self.client_connection.closed:
+                print 'middleman: client_connection is closed'
+                break
+            if self.server_connection.closed:
+                print 'middleman: server_connection is closed'
+                break
+            
+            for result in self._getMsg(False, allowedTypes, allowedHsTypes):
+                if result in (0, 1):
+                    break
                 else:
-                    print 'to read data from server sock'
-                    result = self.read_async(True)
-                    if result in(0, 1):
-                        pass
-                    elif result == 2:
-                        print 'received new session ticket from server_connection'
-                    elif result == 3:
-                        print 'server_connection closed'
+                    result, parser = result
+                    if isinstance(result, ChangeCipherSpec):
+                        print 'middleman: received change cipher spec from client'
+                    elif isinstance(result, ApplicationData):
+                        print 'middleman: received application data from client'
+                        print parser.bytes
+                    elif isinstance(result, Alert):
+                        print 'received Alert from client'
+                        # TODO on connection close, we should store session to disk for session resumption
                     else:
-                        print 'type of result is:'
-                        print type(result)
-                        print 'received application data from server_connection:'
-                        print result
+                        print 'middleman: received unexpected record from client'
+                    break
+
+            for result in self._getMsg(True, allowedTypes, allowedHsTypes):
+                if result in (0, 1):
+                    break
+                else:
+                    result, parser = result
+                    if isinstance(result, ChangeCipherSpec):
+                        print 'middleman: received change cipher spec from server'
+                    elif isinstance(result, NewSessionTicket):
+                        print 'middleman: received new session ticket from server'
+                    elif isinstance(result, ApplicationData):
+                        print 'middleman: received application data from server'
+                        print parser.bytes
+                    elif isinstance(result, Alert):
+                        print 'middleman: recevied alert from server'
+                        # TODO on connection close, we should store session to disk for resumption
+                    else:
+                        print 'middleman: received unexpected record from server'
+                    break
+        # # read change cipher spec from client
+        # for result in self._getMsg(False, allowedTypes, allowedHsTypes):
+        #     if result in (0, 1):
+        #         pass
+        #     else:
+        #         result, parser = result
+        #         if isinstance(result, ChangeCipherSpec):
+        #             print 'received change cipher spec from client'
+        #         else:
+        #             print 'fuck'
+        #         break
+
+        # # receive new session ticket from server
+        # for result in self._getMsg(True, allowedTypes, allowedHsTypes):
+        #     if result in (0, 1):
+        #         pass
+        #     else:
+        #         result, parser = result
+        #         if isinstance(result, NewSessionTicket):
+        #             print 'received new session ticket from server'
+        #         else:
+        #             print 'fuck 2'
+        #         break
+        
+        # # receive change cipher spec from server
+        # for result in self._getMsg(True, allowedTypes, allowedHsTypes):
+        #     if result in (0, 1):
+        #         pass
+        #     else:
+        #         result, parser = result
+        #         if isinstance(result, ChangeCipherSpec):
+        #             print 'received change cipher spec from server'
+        #         else:
+        #             print 'fuck 3'
+        #         break
+
+        # # read application data from client
+        # for result in self._getMsg(False, allowedTypes, allowedHsTypes):
+        #     if result in (0, 1):
+        #         pass
+        #     else:
+        #         result, parser = result
+        #         if isinstance(result, ApplicationData):
+        #             print 'received application data from client'
+        #         else:
+        #             print 'fuck 4'
+        #         break
+
+        # # read application data from server
+        # for result in self._getMsg(True, allowedTypes, allowedHsTypes):
+        #     if result in (0, 1):
+        #         pass
+        #     else:
+        #         result, parser = result
+        #         if isinstance(result, ApplicationData):
+        #             print 'received application data from server'
+        #         else:
+        #             print 'fuck 5'
+        #         break
+        # sel = selectors.DefaultSelector()
+        # sel.register(self.client_sock, selectors.EVENT_READ)
+        # sel.register(self.server_sock, selectors.EVENT_READ)
+        # while True:
+        #     events = sel.select()
+        #     for key, mask in events:
+        #         if key.fileobj == self.client_sock:
+        #             print 'to read data from client sock'
+        #             result = self.read_async(False)
+        #             if result in (0, 1):
+        #                 pass
+        #             elif result == 2:
+        #                 print 'received new session ticket from client'
+        #                 print 'this should not happen'
+        #             elif result == 3:
+        #                 'print client_connection closed'
+        #             else:
+        #                 print 'type of result is:'
+        #                 print type(result)
+        #                 print 'received application data from client_connection:'
+        #                 print result
+        #         else:
+        #             print 'to read data from server sock'
+        #             result = self.read_async(True)
+        #             if result in(0, 1):
+        #                 pass
+        #             elif result == 2:
+        #                 print 'received new session ticket from server_connection'
+        #             elif result == 3:
+        #                 print 'server_connection closed'
+        #             else:
+        #                 print 'type of result is:'
+        #                 print type(result)
+        #                 print 'received application data from server_connection:'
+        #                 print result
 
 
 
