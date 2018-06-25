@@ -132,7 +132,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					mb_handshake_state = MBHandshakeState()
 					mb_handshake_state.set_server_sock(sock)
 					mb_handshake_state.set_client_sock(self.request)
-					mb_handshake_state.naive_middleman()
+					mb_handshake_state.asymmetric_middleman()
 
 				else:
 					# send failed reply
@@ -186,7 +186,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					mb_handshake_state = MBHandshakeState()
 					mb_handshake_state.set_server_sock(sock)
 					mb_handshake_state.set_client_sock(self.request)
-					mb_handshake_state.naive_middleman()
+					mb_handshake_state.asymmetric_middleman()
 
 				else:
 					# send failed reply

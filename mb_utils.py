@@ -452,7 +452,8 @@ def fake_clientSendClientHello(connection, settings, session, srpUsername,
             for group_name in settings.keyShares:
                 group_id = getattr(GroupName, group_name)
                 if group_id == GroupName.x25519 or group_id == GroupName.secp256r1 or group_id == GroupName.secp384r1 or group_id == GroupName.secp521r1:
-                    key_share = naive_genKeyShareEntry(group_id, (3, 4))
+                    #key_share = naive_genKeyShareEntry(group_id, (3, 4))
+                    key_share = asymmetric_genKeyShare(group_id, (3, 4))
                 else:
                     key_share = connection._genKeyShareEntry(group_id, (3, 4))
 

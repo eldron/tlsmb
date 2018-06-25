@@ -5,7 +5,7 @@ import sys
 import ipaddress
 import mb_utils
 
-# the naive version
+# the asymmetric version
 
 if __name__ == '__main__':
     if len(sys.argv) != 5:

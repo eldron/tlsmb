@@ -3,10 +3,12 @@
 
 from tlslite.constants import GroupName
 from tlslite.keyexchange import *
-from tlslite.tlsconnection import *
+from tlslite.tlsconnection import TLSConnection, KeyShareEntry
 from tlslite.utils.ecc import *
 from tlslite.utils.x25519 import *
 from tlslite.utils import tlshashlib
+import os.path
+import pickle
 
 def naive_genKeyShareEntry(group_id, version):
     if group_id == GroupName.x25519:
@@ -29,6 +31,117 @@ def naive_genKeyShareEntry(group_id, version):
 
     return KeyShareEntry().create(group_id, share, priv)
 
+def asymmetric_genKeyShare(group_id, version):
+    """
+    called to generate ec private key for x25519, secp256, 384, 521 curves
+    check if the previous private key file exist
+    if so, generate ec private key according to alpha and prev previous key
+    else, generate random ec private key
+    """
+    if group_id == GroupName.x25519:
+        filename = 'x25519.privkey'
+        curve_name = 'x25519'
+        if os.path.isfile(filename):
+            fin = open(filename, 'r')
+            previous_private_key = fin.read()
+            fin.close()
+            alpha = bytearray(32)
+            alpha[31] = 2
+            priv = gen_fake_private_key_for_client(curve_name, alpha, previous_private_key)
+            share = gen_public_key_from_private_key(curve_name, priv)
+
+            # write priv to file
+            fout = open(filename, 'w')
+            fout.write(priv)
+            fout.close()
+
+            return KeyShareEntry().create(group_id, share, priv)
+        else:
+            entry = TLSConnection._genKeyShareEntry(group_id, version)
+            # write to file
+            fout = open(filename, 'w')
+            fout.write(entry.private)
+            fout.close()
+
+            return entry
+    elif group_id == GroupName.secp256r1:
+        filename = 'secp256r1.privkey'
+        curve_name = 'secp256r1'
+        if os.path.isfile(filename):
+            fin = open(filename, 'rb')
+            curve = getCurveByName(curve_name)
+            previous_private_key = pickle.load(fin)
+            fin.close()
+            alpha = long(2)
+            priv = gen_fake_private_key_for_client(curve_name, alpha, previous_private_key)
+            share = gen_public_key_from_private_key(curve_name, priv)
+
+            # write priv to file
+            fout = open(filename, 'wb')
+            pickle.dump(priv, filename)
+            fout.close()
+            return KeyShareEntry.create(group_id, share, priv)
+        else:
+            entry = TLSConnection._genKeyShareEntry(group_id, version)
+            # write priv to file
+            fout = open(filename, 'wb')
+            pickle.dump(entry.private, filename)
+            fout.close()
+
+            return entry
+    elif group_id == GroupName.secp384r1:
+        filename = 'secp384r1.privkey'
+        curve_name = 'secp384r1'
+        if os.path.isfile(filename):
+            fin = open(filename, 'rb')
+            curve = getCurveByName(curve_name)
+            previous_private_key = pickle.load(fin)
+            fin.close()
+            alpha = long(2)
+            priv = gen_fake_private_key_for_client(curve_name, alpha, previous_private_key)
+            share = gen_public_key_from_private_key(curve_name, priv)
+
+            # write priv to file
+            fout = open(filename, 'wb')
+            pickle.dump(priv, filename)
+            fout.close()
+            return KeyShareEntry.create(group_id, share, priv)
+        else:
+            entry = TLSConnection._genKeyShareEntry(group_id, version)
+            # write priv to file
+            fout = open(filename, 'wb')
+            pickle.dump(entry.private, filename)
+            fout.close()
+            
+            return entry
+    elif group_id == GroupName.secp521r1:
+        filename = 'secp521r1.privkey'
+        curve_name = 'secp521r1'
+        if os.path.isfile(filename):
+            fin = open(filename, 'rb')
+            curve = getCurveByName(curve_name)
+            previous_private_key = pickle.load(fin)
+            fin.close()
+            alpha = long(2)
+            priv = gen_fake_private_key_for_client(curve_name, alpha, previous_private_key)
+            share = gen_public_key_from_private_key(curve_name, priv)
+
+            # write priv to file
+            fout = open(filename, 'wb')
+            pickle.dump(priv, filename)
+            fout.close()
+            return KeyShareEntry.create(group_id, share, priv)
+        else:
+            entry = TLSConnection._genKeyShareEntry(group_id, version)
+            # write priv to file
+            fout = open(filename, 'wb')
+            pickle.dump(entry.private, filename)
+            fout.close()
+            
+            return entry
+    else:
+        print 'asymmetric_genKeyShare: unexpected group'
+        return None
 
 def bytearray_to_long(array):
     value = long(0)
