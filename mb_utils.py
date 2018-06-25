@@ -7,6 +7,7 @@ from tlslite.session import *
 from tlslite.tlsconnection import is_valid_hostname
 from tlslite.handshakehelpers import *
 import selectors2 as selectors
+import os.path
 
 from mb_ec_util import *
 
@@ -860,7 +861,56 @@ class MBHandshakeState(object):
                 # other types need to be put into buffers
                 connection._defragmenter.add_data(header.type, parser.bytes)
 
+    # the asymmetric version, the same with the naive version
+    def asymmetric_get_client_hello(self):
+        """
+        we read client hello from client_connection
+        for client_connection: copy _pre_client_hello_handshake_hash, then update handshake hashes
+        for server_connection: update handshake hashes
+        """
+        if self.state == MB_STATE_INITIAL_WAIT_CLIENT_HELLO or self.state == MB_STATE_RETRY_WAIT_CLIENT_HELLO:
+            pass
+        else:
+            print 'get_client_hello: incorrect state'
+            return
 
+        for result in self._getMsg(False, ContentType.handshake, HandshakeType.client_hello):
+            if result in (0,1):
+                #yield result
+                pass
+            else:
+                break
+        result, parser = result
+        assert isinstance(result, ClientHello)
+        client_hello = result
+
+        # copy for calculating PSK binders
+        self.client_connection._pre_client_hello_handshake_hash = self.client_connection._handshake_hash.copy()
+
+        # update hashes
+        self.client_connection._handshake_hash.update(parser.bytes)
+        self.server_connection._handshake_hash.update(parser.bytes)
+
+        if self.state == MB_STATE_INITIAL_WAIT_CLIENT_HELLO:
+            self.client_hello = client_hello
+            self.client_hello_parser = parser
+        else:
+            self.retry_client_hello = client_hello
+            self.retry_client_hello_parser = parser
+                
+        self.settings = mb_get_settings(client_hello, None)
+        self.session = mb_get_resumable_session(self.client_hello)
+        # we need to set session for client_connection and server_connection
+        self.client_connection.session = self.session
+        self.server_connection.session = self.session
+
+        # change state
+        if self.state == MB_STATE_INITIAL_WAIT_CLIENT_HELLO:
+            self.state = MB_STATE_INITIAL_WAIT_SERVER_HELLO
+        else:
+            self.state = MB_STATE_RETRY_WAIT_SERVER_HELLO
+
+    # the naive version
     def get_client_hello(self):
         """
         we read client hello from client_connection
@@ -909,6 +959,76 @@ class MBHandshakeState(object):
         else:
             self.state = MB_STATE_RETRY_WAIT_SERVER_HELLO
         
+    def asymmetric_mb_handle_hello_retry(self, hello_retry, parser):
+        # we received client hello retry request
+        # for client_connection, we update hashes, then update hash with hello retry
+        # for server_connection, we update hashes, then update hash with hello retry
+        if self.state == MB_STATE_RETRY_WAIT_SERVER_HELLO:
+            print 'we received client hello retry request at state MB_STATE_RETRY_WAIT_SERVER_HELLO'
+            print 'this sould not happen'
+        else:
+            # we received the first hello retry
+            print 'mb_handle_hello_retry called'
+            # change state
+            self.state = MB_STATE_RETRY_WAIT_CLIENT_HELLO
+                        
+            # update hashs for server_connection
+            # according to how client handles HRR
+            client_hello_hash = self.server_connection._handshake_hash.copy()
+            prf_name, prf_size = self.server_connection._getPRFParams(hello_retry.cipher_suite)
+            self.server_connection._handshake_hash = HandshakeHashes()
+            writer = Writer()
+            writer.add(HandshakeType.message_hash, 1)
+            writer.addVarSeq(client_hello_hash.digest(prf_name), 1, 3)
+            self.server_connection._handshake_hash.update(writer.bytes)
+            self.server_connection._handshake_hash.update(parser.bytes)
+
+            # we may should update hashes for client_connection
+            # find how server handles HRR
+            prf_name, prf_size = self.client_connection._getPRFParams(hello_retry.cipher_suite)
+
+            client_hello_hash = self.client_connection._handshake_hash.digest(prf_name)
+            self.client_connection._handshake_hash = HandshakeHashes()
+            writer = Writer()
+            writer.add(HandshakeType.message_hash, 1)
+            writer.addVarSeq(client_hello_hash, 1, 3)
+            self.client_connection._handshake_hash.update(writer.bytes)
+            self.client_connection._handshake_hash.update(parser.bytes)
+
+            self.client_hello_retry_request = hello_retry
+            self.hrr_parser = parser
+
+            # we store the public ec keys to files
+            client_addr, tmp = self.client_sock.getpeername()
+            server_addr, tmp = self.server_sock.getpeername()
+            x25519_filename = client_addr + server_addr + '.x25519.pubkey'
+            secp256r1_filename = client_addr + server_addr + '.secp256r1.pubkey'
+            secp384r1_filename = client_addr + server_addr + '.secp374r1.pubkey'
+            secp521r1_filename = client_addr + server_addr + '.secp521r1.pubkey'
+            client_key_shares = self.client_hello.getExtension(ExtensionType.key_share)
+            for entry in client_key_shares.client_shares:
+                if entry.group == GroupName.x25519:
+                    fout = open(x25519_filename, 'w')
+                    fout.write(entry.key_exchange)
+                    fout.close()
+                elif entry.group == GroupName.secp256r1:
+                    fout = open(secp256r1_filename, 'w')
+                    fout.write(entry.key_exchange)
+                    fout.close()
+                elif entry.group == GroupName.secp384r1:
+                    fout = open(secp384r1_filename, 'w')
+                    fout.write(entry.key_exchange)
+                    fout.close()
+                elif entry.group == GroupName.secp521r1:
+                    fout = open(secp521r1_filename, 'w')
+                    fout.write(entry.key_exchange)
+                    fout.close()
+                else:
+                    print 'asymmetric_handle_hello_retry: unexpected ec group'
+            
+            # we receive client hello and server hello again
+            self.asymmetric_get_client_hello()
+            self.asymmetric_get_server_hello()
 
     def mb_handle_hello_retry(self, hello_retry, parser):
         # we received client hello retry request
@@ -1022,6 +1142,75 @@ class MBHandshakeState(object):
                 print 'this should not happen'
                 return False
         return True
+
+    # the asymmetric version
+    def asymmetric_get_server_hello(self):
+        """
+        we server hello from server_connection
+        we may receive hello retry at state initial wait server hello
+        we should not receive hello retry at state retry wait server hello
+        """
+
+        if self.state == MB_STATE_INITIAL_WAIT_SERVER_HELLO or self.state == MB_STATE_RETRY_WAIT_SERVER_HELLO:
+            pass
+        else:
+            print 'get_server_hello: incorrect state'
+            return
+        
+        for result in self._getMsg(True, ContentType.handshake, HandshakeType.server_hello):
+            if result in (0,1):
+                pass
+            else:
+                break
+        result, parser = result
+        assert isinstance(result, ServerHello)
+        unknown_record = result
+
+        hello_retry = None
+        server_hello = None
+        ext = unknown_record.getExtension(ExtensionType.supported_versions)
+        if ext.version > (3, 3):
+            pass
+        else:
+            print 'get_server_hello: unexpected version'
+
+        if unknown_record.random == TLS_1_3_HRR and ext and ext.version > (3, 3):
+            hello_retry = unknown_record
+        else:
+            server_hello = unknown_record
+
+        if server_hello:
+            # we received server hello
+            # get server hello version
+            real_version = server_hello.server_version
+            print 'real_version is:'
+            print real_version
+
+            if server_hello.server_version >= (3, 3):
+                ext = server_hello.getExtension(ExtensionType.supported_versions)
+                if ext:
+                    real_version = ext.version
+                    print 'real_version reset'
+                    print real_version
+
+            self.server_connection.version = real_version
+            self.client_connection.version = real_version
+            # check server hello
+            if self.check_server_hello(server_hello, real_version):
+                if self.state == MB_STATE_INITIAL_WAIT_SERVER_HELLO:
+                    self.server_hello = server_hello
+                    self.server_hello_parser = parser
+                else:
+                    self.retry_server_hello = server_hello
+                    self.retry_server_hello_parser = parser
+
+                # we are about to do key generation
+                #self.mb_cal_ec_priv_key_from_server_hello(server_hello)
+                self.asymmetric_mb_cal_ec_priv_key_from_server_hello(server_hello)
+            else:
+                print 'check server hello failed'
+        else:
+            self.asymmetric_mb_handle_hello_retry(hello_retry, parser)
 
     def get_server_hello(self):
         """
@@ -1706,6 +1895,92 @@ class MBHandshakeState(object):
     #     # TODO
     #     pass
 
+    # the asymmetric version
+    def asymmetric_mb_cal_ec_priv_key_from_server_hello(self, server_hello):
+        # we calculate ec private key here
+        if self.retry_client_hello:
+            clientHello = self.retry_client_hello
+        else:
+            clientHello = self.client_hello
+        srKex = server_hello.getExtension(ExtensionType.key_share).server_share
+        cl_key_share_ex = clientHello.getExtension(ExtensionType.key_share)
+        cl_kex = next((i for i in cl_key_share_ex.client_shares
+                       if i.group == srKex.group), None)
+        if cl_kex is None:
+            print 'server selected not advertised group'
+            print 'this should not happen'
+            return
+
+        client_addr, tmp = self.client_sock.getpeername()
+        server_addr, tmp = self.server_sock.getpeername()
+        x25519_filename = client_addr + server_addr + '.x25519.pubkey'
+        secp256r1_filename = client_addr + server_addr + '.secp256r1.pubkey'
+        secp384r1_filename = client_addr + server_addr + '.secp374r1.pubkey'
+        secp521r1_filename = client_addr + server_addr + '.secp521r1.pubkey'
+
+        if srKex.group == GroupName.x25519:
+            self.curve_name = 'x25519'
+            # read previous ec public key
+            # bytearray of length 32
+            self.prev_pubkey_filename = x25519_filename
+            pubkey_file = open(self.prev_pubkey_filename, 'r')
+            self.prev_public_key = pubkey_file.read()
+            pubkey_file.close()
+            self.alpha = bytearray(32)
+            self.alpha[31] = 2
+        elif srKex.group == GroupName.secp256r1:
+            self.curve_name = 'secp256r1'
+            self.prev_pubkey_filename = secp256r1_filename
+            pubkey_file = open(self.prev_pubkey_filename, 'r')
+            curve = getCurveByName(self.curve_name)
+            self.prev_public_key = decodeX962Point(pubkey_file.read(), curve)
+            pubkey_file.close()
+            self.alpha = long(2)
+        elif srKex.group == GroupName.secp384r1:
+            self.curve_name = 'secp384r1'
+            self.prev_pubkey_filename = secp384r1_filename
+            pubkey_file = open(self.prev_pubkey_filename, 'r')
+            curve = getCurveByName(self.curve_name)
+            self.prev_public_key = decodeX962Point(pubkey_file.read(), curve)
+            pubkey_file.close()
+            self.alpha = long(2)
+        elif srKex.group == GroupName.secp521r1:
+            self.curve_name = 'secp521r1'
+            self.prev_pubkey_filename = secp521r1_filename
+            pubkey_file = open(self.prev_pubkey_filename, 'r')
+            curve = getCurveByName(self.curve_name)
+            self.prev_public_key = decodeX962Point(pubkey_file.read(), curve)
+            pubkey_file.close()
+            self.alpha = long(2)
+        else:
+            print 'server selected unsupported group'
+            print 'this should not happen'
+    
+        # now calculate ec private key
+        self.mb_ec_private_key = gen_private_key_for_middlebox(self.curve_name, self.alpha, self.prev_public_key)
+        # now store the public keys to file
+        client_key_shares = self.client_hello.getExtension(ExtensionType.key_share)
+        for entry in client_key_shares.client_shares:
+            if entry.group == GroupName.x25519:
+                fout = open(x25519_filename, 'w')
+                fout.write(entry.key_exchange)
+                fout.close()
+            elif entry.group == GroupName.secp256r1:
+                fout = open(secp256r1_filename, 'w')
+                fout.write(entry.key_exchange)
+                fout.close()
+            elif entry.group == GroupName.secp384r1:
+                fout = open(secp384r1_filename, 'w')
+                fout.write(entry.key_exchange)
+                fout.close()
+            elif entry.group == GroupName.secp521r1:
+                fout = open(secp521r1_filename, 'w')
+                fout.write(entry.key_exchange)
+                fout.close()
+            else:
+                print 'asymmetric cal ec priv key: unexpected ec group'
+
+    # the naive version
     def mb_cal_ec_priv_key_from_server_hello(self, server_hello):
         # we calculate ec private key here
         if self.retry_client_hello:
@@ -1914,7 +2189,222 @@ class MBHandshakeState(object):
             connection._shutdown(False)
             raise
 
-    def middleman(self):
+    def middleman_common(self):
+        # now ec private key is calculated
+        if self.retry_server_hello:
+            server_hello = self.retry_server_hello
+            parser = self.retry_server_hello_parser
+        else:
+            server_hello = self.server_hello
+            parser = self.server_hello_parser
+
+        server_secret, server_cl_handshake_traffic_secret, server_sr_handshake_traffic_secret, server_prf_name, server_prf_size = self.server_connection_handle_server_hello(server_hello, parser)
+        client_secret, client_prf_name, client_prf_size = self.client_connection_handle_server_hello(server_hello, parser)
+            
+        # now read encrypted extensions
+        for result in self._getMsg(True, ContentType.handshake, HandshakeType.encrypted_extensions):
+            if result in (0,1):
+                #yield result
+                pass
+            else:
+                break
+        result, parser = result
+        assert isinstance(result, EncryptedExtensions)
+        self.encrypted_extensions = result
+        self.encrypted_extensions_parser = parser
+            
+        print 'received encrypted extensions is:'
+        print self.encrypted_extensions
+
+        self.server_connection_handle_encrypted_extensions(self.encrypted_extensions)
+        self.client_connection_handle_encrypted_extensions(self.encrypted_extensions)
+
+        # now read certificate and certificate verify from server_connection
+        if not self.server_psk:
+            # psk is not used, now read certificate and certificate verify from server_connection
+            for result in self._getMsg(True, ContentType.handshake, HandshakeType.certificate, CertificateType.x509):
+                if result in (0, 1):
+                    #yield result
+                    pass
+                else:
+                    break
+
+            result, parser = result
+            assert isinstance(result, Certificate)
+            self.certificate = result
+            self.certificate_parser = parser
+            print 'received certificate is:'
+            print self.certificate
+
+            self.server_connection_handle_certificate(self.certificate)
+            self.client_connection_handle_certificate(self.certificate)
+
+            # certificate verify
+            for result in self._getMsg(True, ContentType.handshake, HandshakeType.certificate_verify):
+                if result in (0, 1):
+                    #yield result
+                    pass
+                else:
+                    break
+
+            result, parser = result
+            assert isinstance(result, CertificateVerify)
+            self.certificate_verify = result
+            self.certificate_verify_parser = parser
+            print 'received certificate verify is:'
+            print self.certificate_verify
+
+            self.server_connection_handle_certificate_verify(self.certificate_verify)
+            self.client_connection_handle_certificate_verify(self.certificate_verify, client_prf_name)
+            
+        # now read finished from server_connection
+        for result in self._getMsg(True, ContentType.handshake, HandshakeType.finished, server_prf_size):
+            if result in (0, 1):
+                #yield result
+                pass
+            else:
+                break
+        result, parser = result
+        assert isinstance(result, Finished)
+        self.server_finished = result
+        self.server_finished_parser = parser
+        print 'received server finished is:'
+        print_finished(self.server_finished)
+
+        server_finish_hs = self.server_connection_handle_server_finished(self.server_finished)
+        client_secret, client_exporter_master_secret, clieint_cl_app_traffic, client_sr_app_traffic = self.client_connection_handle_server_finished(self.server_finished, client_secret, client_prf_name, client_prf_size)
+
+        # now read finished from client_connection
+        for result in self._getMsg(False, ContentType.handshake, HandshakeType.finished, client_prf_size):
+            if result in (0, 1):
+                #yield result
+                pass
+            else:
+                break
+        result, parser = result
+        assert isinstance(result, Finished)
+        self.client_finished = result
+        self.client_finished_parser = parser
+        print 'received client finished is:'
+        print_finished(self.client_finished)
+
+        self.server_connection_handle_client_finished(self.client_finished, server_secret, server_prf_size, server_prf_name, server_finish_hs, self.certificate)
+        self.client_connection_handle_client_finished(self.client_finished, client_secret, clieint_cl_app_traffic, client_sr_app_traffic, client_exporter_master_secret, client_prf_name)
+            
+        # now we should be able to read decrypted data from client_connection and server_connection
+        # new session ticket is handled in our read function
+
+        allowedTypes = (ContentType.application_data, ContentType.handshake, ContentType.alert, ContentType.change_cipher_spec)
+        allowedHsTypes = HandshakeType.new_session_ticket
+            
+        while True:
+            if self.client_connection.closed:
+                print 'middleman: client_connection is closed'
+                break
+            if self.server_connection.closed:
+                print 'middleman: server_connection is closed'
+                break
+                
+            for result in self._getMsg(False, allowedTypes, allowedHsTypes):
+                if result in (0, 1):
+                    break
+                else:
+                    result, parser = result
+                    if isinstance(result, ChangeCipherSpec):
+                        print 'middleman: received change cipher spec from client'
+                    elif isinstance(result, ApplicationData):
+                        print 'middleman: received application data from client'
+                        print parser.bytes
+                    elif isinstance(result, Alert):
+                        print 'received Alert from client'
+                        # TODO on connection close, we should store session to disk for session resumption
+                    else:
+                        print 'middleman: received unexpected record from client'
+                    break
+
+            for result in self._getMsg(True, allowedTypes, allowedHsTypes):
+                if result in (0, 1):
+                    break
+                else:
+                    result, parser = result
+                    if isinstance(result, ChangeCipherSpec):
+                        print 'middleman: received change cipher spec from server'
+                    elif isinstance(result, NewSessionTicket):
+                        print 'middleman: received new session ticket from server'
+                    elif isinstance(result, ApplicationData):
+                        print 'middleman: received application data from server'
+                        print parser.bytes
+                    elif isinstance(result, Alert):
+                        print 'middleman: recevied alert from server'
+                        # TODO on connection close, we should store session to disk for resumption
+                    else:
+                        print 'middleman: received unexpected record from server'
+                    break
+    # we use the client socket's peer ip and server socket's peer ip to check if 
+    # the previous public key files exist
+    # if exist, we generate ec private key for this round, store this round's public key
+    # and decrypt traffic
+    # if not, we store the public key files, then tare down the connections
+    def asymmetric_middleman(self):
+        client_addr, tmp = self.client_sock.getpeername()
+        server_addr, tmp = self.server_sock.getpeername()
+        x25519_filename = client_addr + server_addr + '.x25519.pubkey'
+        secp256r1_filename = client_addr + server_addr + '.secp256r1.pubkey'
+        secp384r1_filename = client_addr + server_addr + '.secp374r1.pubkey'
+        secp521r1_filename = client_addr + server_addr + '.secp521r1.pubkey'
+        # check if the files exist
+        if os.path.isfile(x25519_filename) or os.path.isfile(secp256r1_filename) or os.path.isfile(secp384r1_filename) or os.path.isfile(secp521r1_filename):
+            # we generate ec private key for this connection, store this connection's public key and decrypt traffic
+            self.state = MB_STATE_INITIAL_WAIT_CLIENT_HELLO
+            # we receive client hello from self.client_connection
+            self.asymmetric_get_client_hello()
+            print 'the client hello is:'
+            print self.client_hello
+
+            self.asymmetric_get_server_hello() # handles client hello retry request
+            print 'the server hello is'
+            print self.server_hello
+            if self.client_hello_retry_request:
+                print 'received HRR'
+                print self.client_hello_retry_request
+                print 'retry client hello is:'
+                print self.retry_client_hello
+                print 'retry server hello is'
+                print self.retry_server_hello
+            self.middleman_common()
+        else:
+            # we store the public key files, then tare down the connections
+            self.state = MB_STATE_INITIAL_WAIT_CLIENT_HELLO
+            # receive client hello from client_connection
+            self.get_client_hello() # now self.client_hello is the client hello we got
+            client_key_shares = self.client_hello.getExtension(ExtensionType.key_share)
+            for entry in client_key_shares.client_shares:
+                if entry.group == GroupName.x25519:
+                    fout = open(x25519_filename, 'w')
+                    fout.write(entry.key_exchange)
+                    fout.close()
+                elif entry.group == GroupName.secp256r1:
+                    fout = open(secp256r1_filename, 'w')
+                    fout.write(entry.key_exchange)
+                    fout.close()
+                elif entry.group == GroupName.secp384r1:
+                    fout = open(secp384r1_filename, 'w')
+                    fout.write(entry.key_exchange)
+                    fout.close()
+                elif entry.group == GroupName.secp521r1:
+                    fout = open(secp521r1_filename, 'w')
+                    fout.write(entry.key_exchange)
+                    fout.close()
+                else:
+                    print 'asymmetric middleman: unexpected ec group'
+
+            # close the client socket and server socket
+            self.client_sock.close()
+            self.server_sock.close()
+
+
+
+    def naive_middleman(self):
         """
         after the socks5 proxy is set, this function is called
         """
@@ -2044,10 +2534,10 @@ class MBHandshakeState(object):
         
         while True:
             if self.client_connection.closed:
-                print 'middleman: client_connection is closed'
+                print 'naive middleman: client_connection is closed'
                 break
             if self.server_connection.closed:
-                print 'middleman: server_connection is closed'
+                print 'naive middleman: server_connection is closed'
                 break
             
             for result in self._getMsg(False, allowedTypes, allowedHsTypes):
@@ -2056,15 +2546,15 @@ class MBHandshakeState(object):
                 else:
                     result, parser = result
                     if isinstance(result, ChangeCipherSpec):
-                        print 'middleman: received change cipher spec from client'
+                        print 'naive middleman: received change cipher spec from client'
                     elif isinstance(result, ApplicationData):
-                        print 'middleman: received application data from client'
+                        print 'naive middleman: received application data from client'
                         print parser.bytes
                     elif isinstance(result, Alert):
                         print 'received Alert from client'
                         # TODO on connection close, we should store session to disk for session resumption
                     else:
-                        print 'middleman: received unexpected record from client'
+                        print 'naive middleman: received unexpected record from client'
                     break
 
             for result in self._getMsg(True, allowedTypes, allowedHsTypes):
@@ -2073,114 +2563,18 @@ class MBHandshakeState(object):
                 else:
                     result, parser = result
                     if isinstance(result, ChangeCipherSpec):
-                        print 'middleman: received change cipher spec from server'
+                        print 'naive middleman: received change cipher spec from server'
                     elif isinstance(result, NewSessionTicket):
-                        print 'middleman: received new session ticket from server'
+                        print 'naive middleman: received new session ticket from server'
                     elif isinstance(result, ApplicationData):
-                        print 'middleman: received application data from server'
+                        print 'naive middleman: received application data from server'
                         print parser.bytes
                     elif isinstance(result, Alert):
-                        print 'middleman: recevied alert from server'
+                        print 'naive middleman: recevied alert from server'
                         # TODO on connection close, we should store session to disk for resumption
                     else:
-                        print 'middleman: received unexpected record from server'
+                        print 'naive middleman: received unexpected record from server'
                     break
-        # # read change cipher spec from client
-        # for result in self._getMsg(False, allowedTypes, allowedHsTypes):
-        #     if result in (0, 1):
-        #         pass
-        #     else:
-        #         result, parser = result
-        #         if isinstance(result, ChangeCipherSpec):
-        #             print 'received change cipher spec from client'
-        #         else:
-        #             print 'fuck'
-        #         break
-
-        # # receive new session ticket from server
-        # for result in self._getMsg(True, allowedTypes, allowedHsTypes):
-        #     if result in (0, 1):
-        #         pass
-        #     else:
-        #         result, parser = result
-        #         if isinstance(result, NewSessionTicket):
-        #             print 'received new session ticket from server'
-        #         else:
-        #             print 'fuck 2'
-        #         break
-        
-        # # receive change cipher spec from server
-        # for result in self._getMsg(True, allowedTypes, allowedHsTypes):
-        #     if result in (0, 1):
-        #         pass
-        #     else:
-        #         result, parser = result
-        #         if isinstance(result, ChangeCipherSpec):
-        #             print 'received change cipher spec from server'
-        #         else:
-        #             print 'fuck 3'
-        #         break
-
-        # # read application data from client
-        # for result in self._getMsg(False, allowedTypes, allowedHsTypes):
-        #     if result in (0, 1):
-        #         pass
-        #     else:
-        #         result, parser = result
-        #         if isinstance(result, ApplicationData):
-        #             print 'received application data from client'
-        #         else:
-        #             print 'fuck 4'
-        #         break
-
-        # # read application data from server
-        # for result in self._getMsg(True, allowedTypes, allowedHsTypes):
-        #     if result in (0, 1):
-        #         pass
-        #     else:
-        #         result, parser = result
-        #         if isinstance(result, ApplicationData):
-        #             print 'received application data from server'
-        #         else:
-        #             print 'fuck 5'
-        #         break
-        # sel = selectors.DefaultSelector()
-        # sel.register(self.client_sock, selectors.EVENT_READ)
-        # sel.register(self.server_sock, selectors.EVENT_READ)
-        # while True:
-        #     events = sel.select()
-        #     for key, mask in events:
-        #         if key.fileobj == self.client_sock:
-        #             print 'to read data from client sock'
-        #             result = self.read_async(False)
-        #             if result in (0, 1):
-        #                 pass
-        #             elif result == 2:
-        #                 print 'received new session ticket from client'
-        #                 print 'this should not happen'
-        #             elif result == 3:
-        #                 'print client_connection closed'
-        #             else:
-        #                 print 'type of result is:'
-        #                 print type(result)
-        #                 print 'received application data from client_connection:'
-        #                 print result
-        #         else:
-        #             print 'to read data from server sock'
-        #             result = self.read_async(True)
-        #             if result in(0, 1):
-        #                 pass
-        #             elif result == 2:
-        #                 print 'received new session ticket from server_connection'
-        #             elif result == 3:
-        #                 print 'server_connection closed'
-        #             else:
-        #                 print 'type of result is:'
-        #                 print type(result)
-        #                 print 'received application data from server_connection:'
-        #                 print result
-
-
 
 def mb_get_settings(client_hello, sever_hello):
     """
