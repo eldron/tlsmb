@@ -44,6 +44,7 @@ def asymmetric_genKeyShare(group_id, version):
         if os.path.isfile(filename):
             fin = open(filename, 'r')
             previous_private_key = fin.read()
+            previous_private_key = bytearray(previous_private_key)
             fin.close()
             alpha = bytearray(32)
             alpha[31] = 2
@@ -78,14 +79,14 @@ def asymmetric_genKeyShare(group_id, version):
 
             # write priv to file
             fout = open(filename, 'wb')
-            pickle.dump(priv, filename)
+            pickle.dump(priv, fout)
             fout.close()
-            return KeyShareEntry.create(group_id, share, priv)
+            return KeyShareEntry().create(group_id, share, priv)
         else:
             entry = TLSConnection._genKeyShareEntry(group_id, version)
             # write priv to file
             fout = open(filename, 'wb')
-            pickle.dump(entry.private, filename)
+            pickle.dump(entry.private, fout)
             fout.close()
 
             return entry
@@ -103,14 +104,14 @@ def asymmetric_genKeyShare(group_id, version):
 
             # write priv to file
             fout = open(filename, 'wb')
-            pickle.dump(priv, filename)
+            pickle.dump(priv, fout)
             fout.close()
-            return KeyShareEntry.create(group_id, share, priv)
+            return KeyShareEntry().create(group_id, share, priv)
         else:
             entry = TLSConnection._genKeyShareEntry(group_id, version)
             # write priv to file
             fout = open(filename, 'wb')
-            pickle.dump(entry.private, filename)
+            pickle.dump(entry.private, fout)
             fout.close()
             
             return entry
@@ -128,14 +129,14 @@ def asymmetric_genKeyShare(group_id, version):
 
             # write priv to file
             fout = open(filename, 'wb')
-            pickle.dump(priv, filename)
+            pickle.dump(priv, fout)
             fout.close()
-            return KeyShareEntry.create(group_id, share, priv)
+            return KeyShareEntry().create(group_id, share, priv)
         else:
             entry = TLSConnection._genKeyShareEntry(group_id, version)
             # write priv to file
             fout = open(filename, 'wb')
-            pickle.dump(entry.private, filename)
+            pickle.dump(entry.private, fout)
             fout.close()
             
             return entry

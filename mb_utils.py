@@ -1925,7 +1925,7 @@ class MBHandshakeState(object):
             # bytearray of length 32
             self.prev_pubkey_filename = x25519_filename
             pubkey_file = open(self.prev_pubkey_filename, 'r')
-            self.prev_public_key = pubkey_file.read()
+            self.prev_public_key = bytearray(pubkey_file.read())
             pubkey_file.close()
             self.alpha = bytearray(32)
             self.alpha[31] = 2
@@ -1934,7 +1934,7 @@ class MBHandshakeState(object):
             self.prev_pubkey_filename = secp256r1_filename
             pubkey_file = open(self.prev_pubkey_filename, 'r')
             curve = getCurveByName(self.curve_name)
-            self.prev_public_key = decodeX962Point(pubkey_file.read(), curve)
+            self.prev_public_key = decodeX962Point(bytearray(pubkey_file.read()), curve)
             pubkey_file.close()
             self.alpha = long(2)
         elif srKex.group == GroupName.secp384r1:
@@ -1942,7 +1942,7 @@ class MBHandshakeState(object):
             self.prev_pubkey_filename = secp384r1_filename
             pubkey_file = open(self.prev_pubkey_filename, 'r')
             curve = getCurveByName(self.curve_name)
-            self.prev_public_key = decodeX962Point(pubkey_file.read(), curve)
+            self.prev_public_key = decodeX962Point(bytearray(pubkey_file.read()), curve)
             pubkey_file.close()
             self.alpha = long(2)
         elif srKex.group == GroupName.secp521r1:
@@ -1950,7 +1950,7 @@ class MBHandshakeState(object):
             self.prev_pubkey_filename = secp521r1_filename
             pubkey_file = open(self.prev_pubkey_filename, 'r')
             curve = getCurveByName(self.curve_name)
-            self.prev_public_key = decodeX962Point(pubkey_file.read(), curve)
+            self.prev_public_key = decodeX962Point(bytearray(pubkey_file.read()), curve)
             pubkey_file.close()
             self.alpha = long(2)
         else:
@@ -2018,7 +2018,7 @@ class MBHandshakeState(object):
             # bytearray of length 32
             self.prev_pubkey_filename = self.curve_name + '.pubkey'
             pubkey_file = open(self.prev_pubkey_filename, 'r')
-            self.prev_public_key = pubkey_file.read()
+            self.prev_public_key = bytearray(pubkey_file.read())
             self.alpha = bytearray(32)
             self.alpha[31] = 2
         elif srKex.group == GroupName.secp256r1:
@@ -2026,21 +2026,21 @@ class MBHandshakeState(object):
             self.prev_pubkey_filename = self.curve_name + '.pubkey'
             pubkey_file = open(self.prev_pubkey_filename, 'r')
             curve = getCurveByName(self.curve_name)
-            self.prev_public_key = decodeX962Point(pubkey_file.read(), curve)
+            self.prev_public_key = decodeX962Point(bytearray(pubkey_file.read()), curve)
             self.alpha = long(2)
         elif srKex.group == GroupName.secp384r1:
             self.curve_name = 'secp384r1'
             self.prev_pubkey_filename = self.curve_name + '.pubkey'
             pubkey_file = open(self.prev_pubkey_filename, 'r')
             curve = getCurveByName(self.curve_name)
-            self.prev_public_key = decodeX962Point(pubkey_file.read(), curve)
+            self.prev_public_key = decodeX962Point(bytearray(pubkey_file.read()), curve)
             self.alpha = long(2)
         elif srKex.group == GroupName.secp521r1:
             self.curve_name = 'secp521r1'
             self.prev_pubkey_filename = self.curve_name + '.pubkey'
             pubkey_file = open(self.prev_pubkey_filename, 'r')
             curve = getCurveByName(self.curve_name)
-            self.prev_public_key = decodeX962Point(pubkey_file.read(), curve)
+            self.prev_public_key = decodeX962Point(bytearray(pubkey_file.read()), curve)
             self.alpha = long(2)
         else:
             print 'server selected unsupported group'
@@ -2627,25 +2627,3 @@ def print_finished(finished):
     print binascii.hexlify(finished.verify_data)
     print 'hash length is:'
     print finished.hash_length
-
-
-
-# if __name__ == '__main__':
-#     file = open('client_hello.raw', 'r')
-#     data = file.read()
-#     client_hello = mb_set_client_hello(bytearray(data))
-#     write_data = client_hello.write()
-#     if write_data == data[5:]:
-#         print 'mb_get_client_hello succeeded'
-#     else:
-#         print 'mb_get_client_hello failed'
-
-#     file.close()
-#     file = open('server_hello.raw', 'r')
-#     data = file.read()
-#     server_hello = mb_set_server_hello(bytearray(data))
-#     write_data = server_hello.write()
-#     if write_data == data[5:]:
-#         print 'mb_set_server_hello succeeded'
-#     else:
-#         print 'mb_set_server_hello failed'
