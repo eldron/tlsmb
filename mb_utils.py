@@ -627,6 +627,22 @@ class MBHandshakeState(object):
         self.client_finished_parser = None
         self.resuming = False
 
+        # cache data to send
+        self.to_server_list = []
+        self.to_client_list = []
+
+    def clear_tosend_list(self, toserver):
+        if toserver:
+            for tosend in self.to_server_list:
+                header, data = tosend
+                self.server_sock.sendall(header.write() + data)
+            self.to_server_list = []
+        else:
+            for tosend in self.to_client_list:
+                header, data = tosend
+                self.client_sock.sendall(header.write() + data)
+            self.to_client_list = []
+    
     def set_server_sock(self, sock):
         """
         set the socket through which the middlebox connected with the tls 1.3 server
@@ -699,11 +715,18 @@ class MBHandshakeState(object):
 
         (header, data) = result
 
-        # we send the ciphertext to the other party
+        # # we send the ciphertext to the other party
+        # if from_server:
+        #     self.client_sock.sendall(header.write() + data)
+        # else:
+        #     self.server_sock.sendall(header.write() + data)
+
+        # cache the cipher text data to send
+        # send the data when inspection is done
         if from_server:
-            self.client_sock.sendall(header.write() + data)
+            self.to_client_list.append((header, data))
         else:
-            self.server_sock.sendall(header.write() + data)
+            self.to_server_list.append((header, data))
 
         if isinstance(header, RecordHeader2):
             data = record_layer._decryptSSL2(data, header.padding)
@@ -903,6 +926,9 @@ class MBHandshakeState(object):
         assert isinstance(result, ClientHello)
         client_hello = result
 
+        # send client hello to server
+        self.clear_tosend_list(True)
+
         # copy for calculating PSK binders
         self.client_connection._pre_client_hello_handshake_hash = self.client_connection._handshake_hash.copy()
 
@@ -953,6 +979,9 @@ class MBHandshakeState(object):
         assert isinstance(result, ClientHello)
         client_hello = result
 
+        # send cached client hello to server
+        self.clear_tosend_list(True)
+        
         # copy for calculating PSK binders
         self.client_connection._pre_client_hello_handshake_hash = self.client_connection._handshake_hash.copy()
 
@@ -1001,6 +1030,9 @@ class MBHandshakeState(object):
         result, parser = result
         assert isinstance(result, ClientHello)
         client_hello = result
+
+        # send client hello to server
+        self.clear_tosend_list(True)
 
         # copy for calculating PSK binders
         self.client_connection._pre_client_hello_handshake_hash = self.client_connection._handshake_hash.copy()
@@ -1278,6 +1310,9 @@ class MBHandshakeState(object):
         assert isinstance(result, ServerHello)
         unknown_record = result
 
+        # send cached server hello or hello retry to client
+        self.clear_tosend_list(False)
+
         hello_retry = None
         server_hello = None
         ext = unknown_record.getExtension(ExtensionType.supported_versions)
@@ -1348,6 +1383,9 @@ class MBHandshakeState(object):
         assert isinstance(result, ServerHello)
         unknown_record = result
 
+        # send server hello or hello retry request to client
+        self.clear_tosend_list(False)
+
         hello_retry = None
         server_hello = None
         ext = unknown_record.getExtension(ExtensionType.supported_versions)
@@ -1415,6 +1453,9 @@ class MBHandshakeState(object):
         result, parser = result
         assert isinstance(result, ServerHello)
         unknown_record = result
+
+        # send server hello or HRR to client
+        self.clear_tosend_list(False)
 
         hello_retry = None
         server_hello = None
@@ -2423,6 +2464,9 @@ class MBHandshakeState(object):
         self.encrypted_extensions = result
         self.encrypted_extensions_parser = parser
             
+        # send encrypted extensions to client
+        self.clear_tosend_list(False)
+
         print 'received encrypted extensions is:'
         print self.encrypted_extensions
 
@@ -2446,6 +2490,9 @@ class MBHandshakeState(object):
             print 'received certificate is:'
             print self.certificate
 
+            # send certificate to client
+            self.clear_tosend_list(False)
+
             self.server_connection_handle_certificate(self.certificate)
             self.client_connection_handle_certificate(self.certificate)
 
@@ -2463,6 +2510,9 @@ class MBHandshakeState(object):
             self.certificate_verify_parser = parser
             print 'received certificate verify is:'
             print self.certificate_verify
+
+            # send certificate verify to client
+            self.clear_tosend_list(False)
 
             self.server_connection_handle_certificate_verify(self.certificate_verify)
             self.client_connection_handle_certificate_verify(self.certificate_verify, client_prf_name)
@@ -2484,6 +2534,9 @@ class MBHandshakeState(object):
         server_finish_hs = self.server_connection_handle_server_finished(self.server_finished)
         client_secret, client_exporter_master_secret, clieint_cl_app_traffic, client_sr_app_traffic = self.client_connection_handle_server_finished(self.server_finished, client_secret, client_prf_name, client_prf_size)
 
+        # send server finished to client
+        self.clear_tosend_list(False)
+        
         # now read finished from client_connection
         for result in self._getMsg(False, ContentType.handshake, HandshakeType.finished, client_prf_size):
             if result in (0, 1):
@@ -2501,55 +2554,10 @@ class MBHandshakeState(object):
         self.server_connection_handle_client_finished(self.client_finished, server_secret, server_prf_size, server_prf_name, server_finish_hs, self.certificate)
         self.client_connection_handle_client_finished(self.client_finished, client_secret, clieint_cl_app_traffic, client_sr_app_traffic, client_exporter_master_secret, client_prf_name)
             
-        # now we should be able to read decrypted data from client_connection and server_connection
-        # new session ticket is handled in our read function
+        # send client finished to server
+        self.clear_tosend_list(True)
 
-        allowedTypes = (ContentType.application_data, ContentType.handshake, ContentType.alert, ContentType.change_cipher_spec)
-        allowedHsTypes = HandshakeType.new_session_ticket
-            
-        while True:
-            if self.client_connection.closed:
-                print 'middleman: client_connection is closed'
-                break
-            if self.server_connection.closed:
-                print 'middleman: server_connection is closed'
-                break
-                
-            for result in self._getMsg(False, allowedTypes, allowedHsTypes):
-                if result in (0, 1):
-                    break
-                else:
-                    result, parser = result
-                    if isinstance(result, ChangeCipherSpec):
-                        print 'middleman: received change cipher spec from client'
-                    elif isinstance(result, ApplicationData):
-                        print 'middleman: received application data from client'
-                        print parser.bytes
-                    elif isinstance(result, Alert):
-                        print 'received Alert from client'
-                        # TODO on connection close, we should store session to disk for session resumption
-                    else:
-                        print 'middleman: received unexpected record from client'
-                    break
-
-            for result in self._getMsg(True, allowedTypes, allowedHsTypes):
-                if result in (0, 1):
-                    break
-                else:
-                    result, parser = result
-                    if isinstance(result, ChangeCipherSpec):
-                        print 'middleman: received change cipher spec from server'
-                    elif isinstance(result, NewSessionTicket):
-                        print 'middleman: received new session ticket from server'
-                    elif isinstance(result, ApplicationData):
-                        print 'middleman: received application data from server'
-                        print parser.bytes
-                    elif isinstance(result, Alert):
-                        print 'middleman: recevied alert from server'
-                        # TODO on connection close, we should store session to disk for resumption
-                    else:
-                        print 'middleman: received unexpected record from server'
-                    break
+    # TODO: this function needs modification
     # we use the client socket's peer ip and server socket's peer ip to check if 
     # the previous public key files exist
     # if exist, we generate ec private key for this round, store this round's public key
@@ -2582,6 +2590,7 @@ class MBHandshakeState(object):
                 print 'retry server hello is'
                 print self.retry_server_hello
             self.middleman_common()
+            self.simple_forward_data()
         else:
             # we store the public key files, then tare down the connections
             self.state = MB_STATE_INITIAL_WAIT_CLIENT_HELLO
@@ -2612,13 +2621,71 @@ class MBHandshakeState(object):
             self.client_sock.close()
             self.server_sock.close()
 
+    def simple_forward_data(self):
+        # now we should be able to read decrypted data from client_connection and server_connection
+        # new session ticket is handled in our read function
+        print 'simple_forward_data called'
 
+        allowedTypes = (ContentType.application_data, ContentType.handshake, ContentType.alert, ContentType.change_cipher_spec)
+        allowedHsTypes = HandshakeType.new_session_ticket
+        while True:
+            if self.client_connection.closed:
+                print 'middleman: client_connection is closed'
+                break
+            if self.server_connection.closed:
+                print 'middleman: server_connection is closed'
+                break
+                
+            for result in self._getMsg(False, allowedTypes, allowedHsTypes):
+                if result in (0, 1):
+                    break
+                else:
+                    result, parser = result
+                    if isinstance(result, ChangeCipherSpec):
+                        print 'middleman: received change cipher spec from client'
+                    elif isinstance(result, ApplicationData):
+                        print 'middleman: received application data from client'
+                        print parser.bytes
+                    elif isinstance(result, Alert):
+                        print 'received Alert from client'
+                        # TODO on connection close, we should store session to disk for session resumption
+                    else:
+                        print 'middleman: received unexpected record from client'
+                    
+                    # send cached data to server
+                    self.clear_tosend_list(True)
+
+                    break
+                    
+
+            for result in self._getMsg(True, allowedTypes, allowedHsTypes):
+                if result in (0, 1):
+                    break
+                else:
+                    result, parser = result
+                    if isinstance(result, ChangeCipherSpec):
+                        print 'middleman: received change cipher spec from server'
+                    elif isinstance(result, NewSessionTicket):
+                        print 'middleman: received new session ticket from server'
+                    elif isinstance(result, ApplicationData):
+                        print 'middleman: received application data from server'
+                        print parser.bytes
+                    elif isinstance(result, Alert):
+                        print 'middleman: recevied alert from server'
+                        # TODO on connection close, we should store session to disk for resumption
+                    else:
+                        print 'middleman: received unexpected record from server'
+                    
+                    # send cached data to client
+                    self.clear_tosend_list(False)
+
+                    break
     def stateless_middleman(self):
         """
         after the socks 5 proxy is set, this function is called
         """
         print 'stateless_middleman called'
-        
+
         self.state = MB_STATE_INITIAL_WAIT_CLIENT_HELLO
         self.stateless_get_client_hello()
         print 'the client hello is:'
@@ -2637,6 +2704,7 @@ class MBHandshakeState(object):
         
         # now ec private key is calculated
         self.middleman_common()
+        self.simple_forward_data()
 
     def naive_middleman(self):
         """
@@ -2660,155 +2728,8 @@ class MBHandshakeState(object):
             print self.retry_server_hello
 
         # now ec private key is calculated
-        if self.retry_server_hello:
-            server_hello = self.retry_server_hello
-            parser = self.retry_server_hello_parser
-        else:
-            server_hello = self.server_hello
-            parser = self.server_hello_parser
-
-        server_secret, server_cl_handshake_traffic_secret, server_sr_handshake_traffic_secret, server_prf_name, server_prf_size = self.server_connection_handle_server_hello(server_hello, parser)
-        client_secret, client_prf_name, client_prf_size = self.client_connection_handle_server_hello(server_hello, parser)
-        
-        # now read encrypted extensions
-        for result in self._getMsg(True, ContentType.handshake, HandshakeType.encrypted_extensions):
-            if result in (0,1):
-                #yield result
-                pass
-            else:
-                break
-        result, parser = result
-        assert isinstance(result, EncryptedExtensions)
-        self.encrypted_extensions = result
-        self.encrypted_extensions_parser = parser
-        
-        print 'received encrypted extensions is:'
-        print self.encrypted_extensions
-
-        self.server_connection_handle_encrypted_extensions(self.encrypted_extensions)
-        self.client_connection_handle_encrypted_extensions(self.encrypted_extensions)
-
-        # now read certificate and certificate verify from server_connection
-        if not self.server_psk:
-            # psk is not used, now read certificate and certificate verify from server_connection
-            for result in self._getMsg(True, ContentType.handshake, HandshakeType.certificate, CertificateType.x509):
-                if result in (0, 1):
-                    #yield result
-                    pass
-                else:
-                    break
-
-            result, parser = result
-            assert isinstance(result, Certificate)
-            self.certificate = result
-            self.certificate_parser = parser
-            print 'received certificate is:'
-            print self.certificate
-
-            self.server_connection_handle_certificate(self.certificate)
-            self.client_connection_handle_certificate(self.certificate)
-
-            # certificate verify
-            for result in self._getMsg(True, ContentType.handshake, HandshakeType.certificate_verify):
-                if result in (0, 1):
-                    #yield result
-                    pass
-                else:
-                    break
-
-            result, parser = result
-            assert isinstance(result, CertificateVerify)
-            self.certificate_verify = result
-            self.certificate_verify_parser = parser
-            print 'received certificate verify is:'
-            print self.certificate_verify
-
-            self.server_connection_handle_certificate_verify(self.certificate_verify)
-            self.client_connection_handle_certificate_verify(self.certificate_verify, client_prf_name)
-        
-        # now read finished from server_connection
-        for result in self._getMsg(True, ContentType.handshake, HandshakeType.finished, server_prf_size):
-            if result in (0, 1):
-                #yield result
-                pass
-            else:
-                break
-        result, parser = result
-        assert isinstance(result, Finished)
-        self.server_finished = result
-        self.server_finished_parser = parser
-        print 'received server finished is:'
-        print_finished(self.server_finished)
-
-        server_finish_hs = self.server_connection_handle_server_finished(self.server_finished)
-        client_secret, client_exporter_master_secret, clieint_cl_app_traffic, client_sr_app_traffic = self.client_connection_handle_server_finished(self.server_finished, client_secret, client_prf_name, client_prf_size)
-
-        # now read finished from client_connection
-        for result in self._getMsg(False, ContentType.handshake, HandshakeType.finished, client_prf_size):
-            if result in (0, 1):
-                #yield result
-                pass
-            else:
-                break
-        result, parser = result
-        assert isinstance(result, Finished)
-        self.client_finished = result
-        self.client_finished_parser = parser
-        print 'received client finished is:'
-        print_finished(self.client_finished)
-
-        self.server_connection_handle_client_finished(self.client_finished, server_secret, server_prf_size, server_prf_name, server_finish_hs, self.certificate)
-        self.client_connection_handle_client_finished(self.client_finished, client_secret, clieint_cl_app_traffic, client_sr_app_traffic, client_exporter_master_secret, client_prf_name)
-        
-        # now we should be able to read decrypted data from client_connection and server_connection
-        # new session ticket is handled in our read function
-
-        allowedTypes = (ContentType.application_data, ContentType.handshake, ContentType.alert, ContentType.change_cipher_spec)
-        allowedHsTypes = HandshakeType.new_session_ticket
-        
-        while True:
-            if self.client_connection.closed:
-                print 'naive middleman: client_connection is closed'
-                break
-            if self.server_connection.closed:
-                print 'naive middleman: server_connection is closed'
-                break
-            
-            for result in self._getMsg(False, allowedTypes, allowedHsTypes):
-                if result in (0, 1):
-                    break
-                else:
-                    result, parser = result
-                    if isinstance(result, ChangeCipherSpec):
-                        print 'naive middleman: received change cipher spec from client'
-                    elif isinstance(result, ApplicationData):
-                        print 'naive middleman: received application data from client'
-                        print parser.bytes
-                    elif isinstance(result, Alert):
-                        print 'received Alert from client'
-                        # TODO on connection close, we should store session to disk for session resumption
-                    else:
-                        print 'naive middleman: received unexpected record from client'
-                    break
-
-            for result in self._getMsg(True, allowedTypes, allowedHsTypes):
-                if result in (0, 1):
-                    break
-                else:
-                    result, parser = result
-                    if isinstance(result, ChangeCipherSpec):
-                        print 'naive middleman: received change cipher spec from server'
-                    elif isinstance(result, NewSessionTicket):
-                        print 'naive middleman: received new session ticket from server'
-                    elif isinstance(result, ApplicationData):
-                        print 'naive middleman: received application data from server'
-                        print parser.bytes
-                    elif isinstance(result, Alert):
-                        print 'naive middleman: recevied alert from server'
-                        # TODO on connection close, we should store session to disk for resumption
-                    else:
-                        print 'naive middleman: received unexpected record from server'
-                    break
+        self.middleman_common()
+        self.simple_forward_data()
 
 def mb_get_settings(client_hello, sever_hello):
     """
