@@ -2617,6 +2617,8 @@ class MBHandshakeState(object):
         """
         after the socks 5 proxy is set, this function is called
         """
+        print 'stateless_middleman called'
+        
         self.state = MB_STATE_INITIAL_WAIT_CLIENT_HELLO
         self.stateless_get_client_hello()
         print 'the client hello is:'
@@ -2635,7 +2637,7 @@ class MBHandshakeState(object):
         
         # now ec private key is calculated
         self.middleman_common()
-        
+
     def naive_middleman(self):
         """
         after the socks5 proxy is set, this function is called
