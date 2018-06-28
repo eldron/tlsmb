@@ -442,6 +442,9 @@ def fake_clientSendClientHello(connection, settings, session, srpUsername,
             extensions.append(ALPNExtension().create(alpn))
 
         session_id = bytearray()
+
+        g_b, b = stateless_gen_g_b_for_client()
+
         # when TLS 1.3 advertised, add key shares, set fake session_id
         if next((i for i in settings.versions if i > (3, 3)), None):
             session_id = getRandomBytes(32)
@@ -453,7 +456,8 @@ def fake_clientSendClientHello(connection, settings, session, srpUsername,
                 group_id = getattr(GroupName, group_name)
                 if group_id == GroupName.x25519 or group_id == GroupName.secp256r1 or group_id == GroupName.secp384r1 or group_id == GroupName.secp521r1:
                     #key_share = naive_genKeyShareEntry(group_id, (3, 4))
-                    key_share = asymmetric_genKeyShare(group_id, (3, 4))
+                    #key_share = asymmetric_genKeyShare(group_id, (3, 4))
+                    key_share = stateless_genKeyShareEntry(group_id, (3, 4), b)
                 else:
                     key_share = connection._genKeyShareEntry(group_id, (3, 4))
 
@@ -483,24 +487,38 @@ def fake_clientSendClientHello(connection, settings, session, srpUsername,
                                  "with parameters")
             else:
                 clientHello = ClientHello()
-                clientHello.create(sent_version, getRandomBytes(32),
+                clientHello.create(sent_version, g_b,
                                    session.sessionID, wireCipherSuites,
                                    certificateTypes, 
                                    session.srpUsername,
                                    reqTack, nextProtos is not None,
                                    session.serverName,
                                    extensions=extensions)
+                # clientHello.create(sent_version, getRandomBytes(32),
+                #                    session.sessionID, wireCipherSuites,
+                #                    certificateTypes, 
+                #                    session.srpUsername,
+                #                    reqTack, nextProtos is not None,
+                #                    session.serverName,
+                #                    extensions=extensions)
 
         #Or send ClientHello (without)
         else:
             clientHello = ClientHello()
-            clientHello.create(sent_version, getRandomBytes(32),
+            clientHello.create(sent_version, g_b,
                                session_id, wireCipherSuites,
                                certificateTypes, 
                                srpUsername,
                                reqTack, nextProtos is not None, 
                                serverName,
                                extensions=extensions)
+            # clientHello.create(sent_version, getRandomBytes(32),
+            #                    session_id, wireCipherSuites,
+            #                    certificateTypes, 
+            #                    srpUsername,
+            #                    reqTack, nextProtos is not None, 
+            #                    serverName,
+            #                    extensions=extensions)
 
         # Check if padding extension should be added
         # we want to add extensions even when using just SSLv3
@@ -911,6 +929,56 @@ class MBHandshakeState(object):
         else:
             self.state = MB_STATE_RETRY_WAIT_SERVER_HELLO
 
+    # the stateless version
+    # we calculate ec private key when we received server hello
+    def stateless_get_client_hello(self):
+        """
+        we read client hello from client_connection
+        for client_connection: copy _pre_client_hello_handshake_hash, then update handshake hashes
+        for server_connection: update handshake hashes
+        """
+        if self.state == MB_STATE_INITIAL_WAIT_CLIENT_HELLO or self.state == MB_STATE_RETRY_WAIT_CLIENT_HELLO:
+            pass
+        else:
+            print 'get_client_hello: incorrect state'
+            return
+
+        for result in self._getMsg(False, ContentType.handshake, HandshakeType.client_hello):
+            if result in (0,1):
+                #yield result
+                pass
+            else:
+                break
+        result, parser = result
+        assert isinstance(result, ClientHello)
+        client_hello = result
+
+        # copy for calculating PSK binders
+        self.client_connection._pre_client_hello_handshake_hash = self.client_connection._handshake_hash.copy()
+
+        # update hashes
+        self.client_connection._handshake_hash.update(parser.bytes)
+        self.server_connection._handshake_hash.update(parser.bytes)
+
+        if self.state == MB_STATE_INITIAL_WAIT_CLIENT_HELLO:
+            self.client_hello = client_hello
+            self.client_hello_parser = parser
+        else:
+            self.retry_client_hello = client_hello
+            self.retry_client_hello_parser = parser
+                
+        self.settings = mb_get_settings(client_hello, None)
+        self.session = mb_get_resumable_session(self.client_hello)
+        # we need to set session for client_connection and server_connection
+        self.client_connection.session = self.session
+        self.server_connection.session = self.session
+
+        # change state
+        if self.state == MB_STATE_INITIAL_WAIT_CLIENT_HELLO:
+            self.state = MB_STATE_INITIAL_WAIT_SERVER_HELLO
+        else:
+            self.state = MB_STATE_RETRY_WAIT_SERVER_HELLO
+
     # the naive version
     def get_client_hello(self):
         """
@@ -960,6 +1028,49 @@ class MBHandshakeState(object):
         else:
             self.state = MB_STATE_RETRY_WAIT_SERVER_HELLO
         
+    def stateless_mb_handle_hello_retry(self, hello_retry, parser):
+        # we received client hello retry request
+        # for client_connection, we update hashes, then update hash with hello retry
+        # for server_connection, we update hashes, then update hash with hello retry
+        if self.state == MB_STATE_RETRY_WAIT_SERVER_HELLO:
+            print 'we received client hello retry request at state MB_STATE_RETRY_WAIT_SERVER_HELLO'
+            print 'this sould not happen'
+        else:
+            # we received the first hello retry
+            print 'mb_handle_hello_retry called'
+            # change state
+            self.state = MB_STATE_RETRY_WAIT_CLIENT_HELLO
+                        
+            # update hashs for server_connection
+            # according to how client handles HRR
+            client_hello_hash = self.server_connection._handshake_hash.copy()
+            prf_name, prf_size = self.server_connection._getPRFParams(hello_retry.cipher_suite)
+            self.server_connection._handshake_hash = HandshakeHashes()
+            writer = Writer()
+            writer.add(HandshakeType.message_hash, 1)
+            writer.addVarSeq(client_hello_hash.digest(prf_name), 1, 3)
+            self.server_connection._handshake_hash.update(writer.bytes)
+            self.server_connection._handshake_hash.update(parser.bytes)
+
+            # we may should update hashes for client_connection
+            # find how server handles HRR
+            prf_name, prf_size = self.client_connection._getPRFParams(hello_retry.cipher_suite)
+
+            client_hello_hash = self.client_connection._handshake_hash.digest(prf_name)
+            self.client_connection._handshake_hash = HandshakeHashes()
+            writer = Writer()
+            writer.add(HandshakeType.message_hash, 1)
+            writer.addVarSeq(client_hello_hash, 1, 3)
+            self.client_connection._handshake_hash.update(writer.bytes)
+            self.client_connection._handshake_hash.update(parser.bytes)
+
+            self.client_hello_retry_request = hello_retry
+            self.hrr_parser = parser
+
+            # we receive client hello and server hello again
+            self.stateless_get_client_hello()
+            self.stateless_get_server_hello()
+
     def asymmetric_mb_handle_hello_retry(self, hello_retry, parser):
         # we received client hello retry request
         # for client_connection, we update hashes, then update hash with hello retry
@@ -1143,6 +1254,76 @@ class MBHandshakeState(object):
                 print 'this should not happen'
                 return False
         return True
+
+    # the stateless version
+    def stateless_get_server_hello(self):
+        """
+        we server hello from server_connection
+        we may receive hello retry at state initial wait server hello
+        we should not receive hello retry at state retry wait server hello
+        """
+
+        if self.state == MB_STATE_INITIAL_WAIT_SERVER_HELLO or self.state == MB_STATE_RETRY_WAIT_SERVER_HELLO:
+            pass
+        else:
+            print 'get_server_hello: incorrect state'
+            return
+        
+        for result in self._getMsg(True, ContentType.handshake, HandshakeType.server_hello):
+            if result in (0,1):
+                pass
+            else:
+                break
+        result, parser = result
+        assert isinstance(result, ServerHello)
+        unknown_record = result
+
+        hello_retry = None
+        server_hello = None
+        ext = unknown_record.getExtension(ExtensionType.supported_versions)
+        if ext.version > (3, 3):
+            pass
+        else:
+            print 'get_server_hello: unexpected version'
+
+        if unknown_record.random == TLS_1_3_HRR and ext and ext.version > (3, 3):
+            hello_retry = unknown_record
+        else:
+            server_hello = unknown_record
+
+        if server_hello:
+            # we received server hello
+            # get server hello version
+            real_version = server_hello.server_version
+            print 'real_version is:'
+            print real_version
+
+            if server_hello.server_version >= (3, 3):
+                ext = server_hello.getExtension(ExtensionType.supported_versions)
+                if ext:
+                    real_version = ext.version
+                    print 'real_version reset'
+                    print real_version
+
+            self.server_connection.version = real_version
+            self.client_connection.version = real_version
+            # check server hello
+            if self.check_server_hello(server_hello, real_version):
+                if self.state == MB_STATE_INITIAL_WAIT_SERVER_HELLO:
+                    self.server_hello = server_hello
+                    self.server_hello_parser = parser
+                else:
+                    self.retry_server_hello = server_hello
+                    self.retry_server_hello_parser = parser
+
+                # we are about to do key generation
+                self.stateless_mb_cal_ec_priv_key_from_server_hello(server_hello)
+                #self.mb_cal_ec_priv_key_from_server_hello(server_hello)
+                #self.asymmetric_mb_cal_ec_priv_key_from_server_hello(server_hello)
+            else:
+                print 'check server hello failed'
+        else:
+            self.stateless_mb_handle_hello_retry(hello_retry, parser)
 
     # the asymmetric version
     def asymmetric_get_server_hello(self):
@@ -1896,6 +2077,34 @@ class MBHandshakeState(object):
     #     # TODO
     #     pass
 
+    # the stateless version
+    def stateless_mb_cal_ec_priv_key_from_server_hello(self, server_hello):
+        # we calculate ec private key here
+        if self.retry_client_hello:
+            clientHello = self.retry_client_hello
+        else:
+            clientHello = self.client_hello
+        srKex = server_hello.getExtension(ExtensionType.key_share).server_share
+        cl_key_share_ex = clientHello.getExtension(ExtensionType.key_share)
+        cl_kex = next((i for i in cl_key_share_ex.client_shares
+                       if i.group == srKex.group), None)
+        if cl_kex is None:
+            print 'server selected not advertised group'
+            print 'this should not happen'
+            return None
+        
+        # calculate g^b^a
+        g_a_b = cal_g_a_b_for_mb(clientHello.random)
+        if srKex.group == GroupName.x25519:
+            self.mb_ec_private_key = stateless_gen_private_key('x25519', g_a_b)
+        elif srKex.group == GroupName.secp256r1:
+            self.mb_ec_private_key = stateless_gen_private_key('secp256r1', g_a_b)
+        elif srKex.group == GroupName.secp384r1:
+            self.mb_ec_private_key = stateless_gen_private_key('secp384r1', g_a_b)
+        elif srKex.group == GroupName.secp521r1:
+            self.mb_ec_private_key = stateless_gen_private_key('secp521r1', g_a_b)
+        else:
+            print 'stateless_mb_cal_ec_private_from_server_hello: unexpected curve name'
     # the asymmetric version
     def asymmetric_mb_cal_ec_priv_key_from_server_hello(self, server_hello):
         # we calculate ec private key here
@@ -2404,7 +2613,29 @@ class MBHandshakeState(object):
             self.server_sock.close()
 
 
+    def stateless_middleman(self):
+        """
+        after the socks 5 proxy is set, this function is called
+        """
+        self.state = MB_STATE_INITIAL_WAIT_CLIENT_HELLO
+        self.stateless_get_client_hello()
+        print 'the client hello is:'
+        print self.client_hello
 
+        self.stateless_get_server_hello() # handles client hello retry request
+        print 'the server hello is:'
+        print self.server_hello
+        if self.client_hello_retry_request:
+            print 'received HRR'
+            print self.client_hello_retry_request
+            print 'retry client hello is:'
+            print self.retry_client_hello
+            print 'retry server hello is:'
+            print self.retry_server_hello
+        
+        # now ec private key is calculated
+        self.middleman_common()
+        
     def naive_middleman(self):
         """
         after the socks5 proxy is set, this function is called

@@ -7,8 +7,55 @@ from tlslite.tlsconnection import TLSConnection, KeyShareEntry
 from tlslite.utils.ecc import *
 from tlslite.utils.x25519 import *
 from tlslite.utils import tlshashlib
+from tlslite.utils import cryptomath
 import os.path
 import pickle
+
+# set random to in client hello to this
+def stateless_gen_g_b_for_client():
+    b = getRandomBytes(X25519_ORDER_SIZE)
+    g_b = x25519(b, X25519_G)
+    return (g_b, b) # set random to g_b, use b to gen ec private key
+
+def cal_g_a_b_for_mb(g_b):
+    a = bytearray(32)
+    a[31] = 3
+    g_a_b = x25519(a, g_b)
+    return g_a_b
+    
+def stateless_genKeyShareEntry(group_id, version, b):
+    # function used by client
+    # client has g^a
+    a = bytearray(32)
+    a[31] = 3
+    g_a = x25519(a, X25519_G)
+    g_a_b = x25519(b, g_a)
+
+    if group_id == GroupName.x25519:
+        priv = stateless_gen_private_key('x25519', g_a_b)
+        share = x25519(priv, X25519_G)
+        return KeyShareEntry().create(group_id, share, priv)
+    elif group_id == GroupName.secp256r1:
+        curve_name = 'secp256r1'
+        priv = stateless_gen_private_key(curve_name, g_a_b)
+        curve = getCurveByName(curve_name)
+        share = encodeX962Point(curve.generator * priv)
+        return KeyShareEntry().create(group_id, share, priv)
+    elif group_id == GroupName.secp384r1:
+        curve_name = 'secp384r1'
+        priv = stateless_gen_private_key(curve_name, g_a_b)
+        curve = getCurveByName(curve_name)
+        share = encodeX962Point(curve.generator * priv)
+        return KeyShareEntry().create(group_id, share, priv)
+    elif group_id == GroupName.secp521r1:
+        curve_name = 'secp521r1'
+        priv = stateless_gen_private_key(curve_name, g_a_b)
+        curve = getCurveByName(curve_name)
+        share = encodeX962Point(curve.generator * priv)
+        return KeyShareEntry().create(group_id, share, priv)
+    else:
+        print 'stateless_genKeyShareEntry: unexpected group'
+        return None
 
 def naive_genKeyShareEntry(group_id, version):
     if group_id == GroupName.x25519:
@@ -167,6 +214,41 @@ def gen_public_key_from_private_key(curve_name, priv):
     else:
         print 'unexpected curve name: ' + curve_name
 
+# generatr ec private key from g^a^b
+# g^a^b should be a point on x25519
+# used by both tls client and middlebox
+def stateless_gen_private_key(curve_name, g_a_b):
+    sha = tlshashlib.sha512()
+    sha.update(g_a_b)
+    hash_result = bytearray(sha.digest())
+
+    if curve_name == 'x25519':
+        return hash_result[:32] # private key for x25519 is of type bytearray
+    elif curve_name == 'secp256r1':
+        # private key is of type long
+        curve = getCurveByName(curve_name)
+        private_key = long(hash_result[0])
+        for i in range(31):
+            private_key = private_key << 8 + hash_result[i + 1]
+        private_key = private_key % curve.generator.order()
+        return private_key
+    elif curve_name == 'secp384r1':
+        curve = getCurveByName(curve_name)
+        private_key = long(hash_result[0])
+        for i in range(47):
+            private_key = private_key << 8 + hash_result[i + 1]
+        private_key = private_key % curve.generate.order()
+        return private_key
+    elif curve_name == 'secp521r1':
+        curve = getCurveByName(curve_name)
+        private_key = long(hash_result[0])
+        for i in range(63):
+            private_key = private_key << 8 + hash_result[i + 1]
+        private_key = private_key % curve.generator.order()
+        return private_key
+    else:
+        print 'unexpected curve name'
+        return None
 def gen_fake_private_key_for_client(curve_name, alpha, prev_private_key):
     if curve_name == 'x25519' or curve_name == 'secp256r1' or curve_name == 'secp384r1' or curve_name == 'secp521r1':
         if curve_name == 'x25519':
