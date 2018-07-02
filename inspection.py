@@ -237,6 +237,31 @@ def ac_inspect(states, global_state_number, token, offset, matched_rules):
         global_state_number = 0
     return global_state_number
 
+class ACInspect(object):
+    def __init__(self):
+        self.states = None
+        self.rules = []
+        self.global_state_number = 0
+        self.matched_rules = []
+        self.offset = 0
+
+    def inspect(self, data):
+        for token in data:
+            self.global_state_number = ac_inspect(self.states, self.global_state_number, token, self.offset, self.matched_rules)
+            self.offset = self.offset + 1
+        
+    def clear_after_inspection(self):
+        for rule in self.rules:
+            rule.hit = False
+            for sf in rule.sfs:
+                sf.hit = False
+                sf.offset = 0
+
+    def initialize_ac_inspect(self, filename):
+        self.rules = read_rules(filename)
+        self.states = build_ac_graph(self.rules)
+        cal_failure_state(self.states)
+        
 def print_sf(sf):
     print sf.type
     print sf.min
