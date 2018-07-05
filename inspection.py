@@ -1,5 +1,82 @@
 from collections import deque
 
+class SnortContent(object):
+    def __init__(self):
+        self.content = None # of type bytearray
+        self.distance = 0 # of type int
+        self.within = 0 # of type int
+        self.has_distance = False
+        self.has_within = False
+        self.pcre = None # of type bytearray, not used for now
+        self.rule = None # of type SnortRule
+        self.hit = False
+        self.offset = 0 # of type int, set during inspection
+
+class SnortRule(object):
+    def __init__(self):
+        self.contents_list = []
+        self.sid = 0 # of type int
+        self.gid = 0 # of type int
+        self.hit = False # set during inspection
+
+def cal_content(s):
+    content = bytearray()
+    hex_begin = False
+    i = 0
+    while i < len(s):
+        if s[i] == '|':
+            if hex_begin:
+                hex_begin = False
+            else:
+                hex_begin = True
+            i = i + 1
+        else:
+            if hex_begin:
+                if s[i] == ' ':
+                    i = i + 1
+                else:
+                    # convert 2 bytes to hex value
+                    content.append(convert_hex_to_int(s[i], s[i + 1]))
+                    i = i + 2
+            else:
+                # convert the current to hex value
+                content.append(ord(s[i]))
+                i = i + 1
+    return content
+
+def read_snort_rules(filename):
+    fin = open(filename, 'r')
+    lines = fin.readlines()
+    fin.close()
+    rules = []
+    for line in lines:
+        if 'content:"' in line:
+            rule = SnortRule()
+            rules.append(rule)
+            splits = line.split(';')
+            for sp in splits:
+                if 'content:"' in sp:
+                    snort_content = SnortContent()
+                    substrings = sp.split(',')
+                    for s in substrings:
+                        if 'content:"' in s:
+                            # we set content here
+                            begin_idx = s.find('"') + 1
+                            end_idx = s.find('"', begin_idx)
+                            snort_content.content = cal_content(s[begin_idx: end_idx])
+                        elif 'distance' in s:
+                            # we set distance here
+                            idx = s.find(' ')
+                            snort_content.has_distance = True
+                            snort_content.distance = int(s[idx + 1:])
+                        elif 'within' in s:
+                            # we set within here
+                            idx = s.find(' ')
+                            snort_content.has_within = True
+                            snort_content.within = int(s[idx + 1:])
+                    rule.contents_list.append(snort_content)
+
+    return rules
 class SignatureFragment(object):
     def __init__(self):
         self.type = 0 # of type int
