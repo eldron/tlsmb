@@ -99,6 +99,7 @@ def read_snort_rules(filename):
 
                 if 'content:"' in sp:
                     snort_content = SnortContent()
+                    snort_content.rule = rule
                     substrings = sp.split(',')
                     for s in substrings:
                         if 'content:"' in s:
@@ -385,7 +386,7 @@ def ac_inspect(states, global_state_number, token, offset, matched_rules):
         for sf in states[global_state_number].output:
             sf.hit = True
             sf.offset = offset
-            if check_rule(sf.rule):
+            if sf.rule.check_rule():
                 if sf.rule.hit:
                     pass
                 else:
@@ -423,7 +424,14 @@ class ACInspect(object):
                     c.offset = 0
 
     def initialize_ac_inspect(self, filename, rule_type):
-        self.rules = read_rules(filename)
+        if rule_type == RuleType.CLAMAV:
+            self.rules = read_rules(filename)
+        elif rule_type == RuleType.SNORT:
+            self.rules = read_snort_rules(filename)
+        else:
+            print 'unsupported rule type'
+            return
+        
         self.rule_type = rule_type
         self.states = build_ac_graph(self.rules, rule_type)
         cal_failure_state(self.states)
