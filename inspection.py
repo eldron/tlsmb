@@ -12,12 +12,49 @@ class SnortContent(object):
         self.hit = False
         self.offset = 0 # of type int, set during inspection
 
+    def print_content(self):
+        print 'content is: '
+        print self.content
+        if self.has_distance:
+            print 'distance is:'
+            print self.distance
+        if self.has_within:
+            print 'within is:'
+            print self.within
+
 class SnortRule(object):
     def __init__(self):
         self.contents_list = []
         self.sid = 0 # of type int
         self.gid = 0 # of type int
         self.hit = False # set during inspection
+    
+    def check_rule(self):
+        content_list_len = len(self.contents_list)
+        if self.contents_list[0].hit == False:
+            return False
+
+        i = 1
+        while i < content_list_len:
+            next_c = self.contents_list[i]
+            prev_c = self.contents_list[i - 1]
+            if next_c.hit and prev_c.hit:
+                if next_c.has_distance:
+                    if next_c.offset < prev_c.offset + next_c.distance + len(next_c.content):
+                        return False
+                if next_c.has_within:
+                    if next_c.offset > prev_c.offset + next_c.within + len(next_c.content):
+                        return False
+            else:
+                return False
+            i = i + 1
+        return True
+
+    def print_rule(self):
+        print 'sid is:'
+        print self.sid
+        for content in self.contents_list:
+            content.print_content()
 
 def cal_content(s):
     content = bytearray()
@@ -51,10 +88,15 @@ def read_snort_rules(filename):
     rules = []
     for line in lines:
         if 'content:"' in line:
+            print 'processing ' + line
             rule = SnortRule()
             rules.append(rule)
             splits = line.split(';')
             for sp in splits:
+                if ' sid:' in sp:
+                    idx = sp.find(':')
+                    rule.sid = int(sp[idx + 1:])
+
                 if 'content:"' in sp:
                     snort_content = SnortContent()
                     substrings = sp.split(',')
@@ -68,15 +110,24 @@ def read_snort_rules(filename):
                             # we set distance here
                             idx = s.find(' ')
                             snort_content.has_distance = True
-                            snort_content.distance = int(s[idx + 1:])
+                            try:
+                                snort_content.distance = int(s[idx + 1:])
+                            except ValueError:
+                                snort_content.has_distance = False
                         elif 'within' in s:
                             # we set within here
                             idx = s.find(' ')
                             snort_content.has_within = True
-                            snort_content.within = int(s[idx + 1:])
+                            try:
+                                snort_content.within = int(s[idx + 1:])
+                            except ValueError:
+                                snort_content.has_within = False
+
                     rule.contents_list.append(snort_content)
 
     return rules
+
+
 class SignatureFragment(object):
     def __init__(self):
         self.type = 0 # of type int
@@ -102,12 +153,20 @@ class DistanceRelation(object):
     RELATION_MIN = 3
     RELATION_MINMAX = 4
 
+class RuleType(object):
+    CLAMAV = 0
+    SNORT = 1
+    BRO = 3
+
 class Rule(object):
     def __init__(self):
         self.rule_name = None # of type str
         self.sfs_count = 0 # of type int, number of signature fragments
         self.sfs = [] # list contains SignatureFragment
         self.hit = False # of type bool
+
+    def check_rule(self):
+        return check_rule(self)
 
 def char_to_int(a):
     a = ord(a)
@@ -183,21 +242,38 @@ def transit(states, state_number, token):
             return edge.state_number
     return -1
 
-def build_ac_graph(rules):
+def build_ac_graph(rules, rule_type):
     state_count = 0
     current_state = 0
     states = []
     zero_state = State()
     states.append(zero_state)
 
-    for i in range(len(rules)):
-        rule = rules[i]
-        for j in range(rule.sfs_count):
-            sf = rule.sfs[j]
+    for rule in rules:
+        if rule_type == RuleType.CLAMAV:
+            sf_or_content_count = rule.sfs_count
+        else:
+            sf_or_content_count = len(rule.contents_list)
+        for j in range(sf_or_content_count):
+            #sf = rule.sfs[j]
+            if rule_type == RuleType.CLAMAV:
+                sf = rule.sfs[j]
+            else:
+                sf = rule.contents_list[j]
+            
             current_state = 0
             k = 0
-            while k < len(sf.s):
-                next_state = transit(states, current_state, sf.s[k])
+            
+            if rule_type == RuleType.CLAMAV:
+                content_len = len(sf.s)
+            else:
+                content_len = len(sf.content)
+
+            while k < content_len:
+                if rule_type == RuleType.CLAMAV:
+                    next_state = transit(states, current_state, sf.s[k])
+                else:
+                    next_state = transit(states, current_state, sf.content[k])
                 if next_state == -1:
                     # did not find edge for the current token, need to add edges for the following tokens
                     break
@@ -205,15 +281,19 @@ def build_ac_graph(rules):
                     k = k + 1
                     current_state = next_state
 
-            if k == len(sf.s):
+            if k == content_len:
                 # the signature fragment already exists
                 # we add the the current signature fragment to the state's output list
                 states[current_state].output.append(sf)
             else:
                 # add edges for the following tokens
-                while k < len(sf.s):
+                while k < content_len:
                     edge = Edge()
-                    edge.token = sf.s[k]
+                    if rule_type == RuleType.CLAMAV:
+                        edge.token = sf.s[k]
+                    else:
+                        edge.token = sf.content[k]
+
                     edge.state_number = state_count + 1
                     states[current_state].edges.append(edge)
                     newstate = State()
@@ -255,7 +335,7 @@ def cal_failure_state(states):
             states[edge.state_number].fail_state_number = goto_func(states, fail_state, edge.token)
 
             # modify the output list
-            if len(states[edge.state_number].output > 0):
+            if len(states[edge.state_number].output) > 0:
                 tmp = states[edge.state_number].fail_state_number
                 tmp = states[tmp]
                 for sf in tmp.output:
@@ -321,22 +401,31 @@ class ACInspect(object):
         self.global_state_number = 0
         self.matched_rules = []
         self.offset = 0
+        self.rule_type = RuleType.CLAMAV
 
+    # called in a loop to perform inspection
     def inspect(self, data):
         for token in data:
-            self.global_state_number = ac_inspect(self.states, self.global_state_number, token, self.offset, self.matched_rules)
+            value = ac_inspect(self.states, self.global_state_number, token, self.offset, self.matched_rules)
+            self.global_state_number = value
             self.offset = self.offset + 1
         
     def clear_after_inspection(self):
         for rule in self.rules:
             rule.hit = False
-            for sf in rule.sfs:
-                sf.hit = False
-                sf.offset = 0
+            if self.rule_type == RuleType.CLAMAV:
+                for sf in rule.sfs:
+                    sf.hit = False
+                    sf.offset = 0
+            elif self.rule_type == RuleType.SNORT:
+                for c in rule.contents_list:
+                    c.hit = False
+                    c.offset = 0
 
-    def initialize_ac_inspect(self, filename):
+    def initialize_ac_inspect(self, filename, rule_type):
         self.rules = read_rules(filename)
-        self.states = build_ac_graph(self.rules)
+        self.rule_type = rule_type
+        self.states = build_ac_graph(self.rules, rule_type)
         cal_failure_state(self.states)
         
 def print_sf(sf):
@@ -358,5 +447,12 @@ def print_rules(rules):
         print_rule(rule)
 
 if __name__ == '__main__':
-    rules = read_rules('rules_2000')
-    print_rules(rules)
+    ac_inspect = ACInspect()
+    ac_inspect.initialize_ac_inspect('rules_2000', RuleType.CLAMAV)
+    fin = open('rules_2000', 'r')
+    lines = fin.readlines()
+    fin.close()
+    for line in lines:
+        ac_inspect.inspect(bytearray(line))
+
+    print_rules(ac_inspect.matched_rules)
