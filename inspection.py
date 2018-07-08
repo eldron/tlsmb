@@ -81,52 +81,52 @@ def cal_content(s):
                 i = i + 1
     return content
 
-def read_snort_rules(filename):
-    fin = open(filename, 'r')
-    lines = fin.readlines()
-    fin.close()
-    rules = []
-    for line in lines:
-        if 'content:"' in line:
-            print 'processing ' + line
-            rule = SnortRule()
-            rules.append(rule)
-            splits = line.split(';')
-            for sp in splits:
-                if ' sid:' in sp:
-                    idx = sp.find(':')
-                    rule.sid = int(sp[idx + 1:])
+# def read_snort_rules(filename):
+#     fin = open(filename, 'r')
+#     lines = fin.readlines()
+#     fin.close()
+#     rules = []
+#     for line in lines:
+#         if 'content:"' in line:
+#             print 'processing ' + line
+#             rule = SnortRule()
+#             rules.append(rule)
+#             splits = line.split(';')
+#             for sp in splits:
+#                 if ' sid:' in sp:
+#                     idx = sp.find(':')
+#                     rule.sid = int(sp[idx + 1:])
 
-                if 'content:"' in sp:
-                    snort_content = SnortContent()
-                    snort_content.rule = rule
-                    substrings = sp.split(',')
-                    for s in substrings:
-                        if 'content:"' in s:
-                            # we set content here
-                            begin_idx = s.find('"') + 1
-                            end_idx = s.find('"', begin_idx)
-                            snort_content.content = cal_content(s[begin_idx: end_idx])
-                        elif 'distance' in s:
-                            # we set distance here
-                            idx = s.find(' ')
-                            snort_content.has_distance = True
-                            try:
-                                snort_content.distance = int(s[idx + 1:])
-                            except ValueError:
-                                snort_content.has_distance = False
-                        elif 'within' in s:
-                            # we set within here
-                            idx = s.find(' ')
-                            snort_content.has_within = True
-                            try:
-                                snort_content.within = int(s[idx + 1:])
-                            except ValueError:
-                                snort_content.has_within = False
+#                 if 'content:"' in sp:
+#                     snort_content = SnortContent()
+#                     snort_content.rule = rule
+#                     substrings = sp.split(',')
+#                     for s in substrings:
+#                         if 'content:"' in s:
+#                             # we set content here
+#                             begin_idx = s.find('"') + 1
+#                             end_idx = s.find('"', begin_idx)
+#                             snort_content.content = cal_content(s[begin_idx: end_idx])
+#                         elif 'distance' in s:
+#                             # we set distance here
+#                             idx = s.find(' ')
+#                             snort_content.has_distance = True
+#                             try:
+#                                 snort_content.distance = int(s[idx + 1:])
+#                             except ValueError:
+#                                 snort_content.has_distance = False
+#                         elif 'within' in s:
+#                             # we set within here
+#                             idx = s.find(' ')
+#                             snort_content.has_within = True
+#                             try:
+#                                 snort_content.within = int(s[idx + 1:])
+#                             except ValueError:
+#                                 snort_content.has_within = False
 
-                    rule.contents_list.append(snort_content)
+#                     rule.contents_list.append(snort_content)
 
-    return rules
+#     return rules
 
 
 class SignatureFragment(object):
@@ -183,51 +183,57 @@ def convert_hex_to_int(a, b):
     low = char_to_int(b)
     return (high << 4) | low
 
-def read_rules(filename):
-    fin = open(filename, 'r')
-    rules = []
-    # read the number of rules
-    number_of_rules = int(fin.readline())
-    for i in range(number_of_rules):
-        rule = Rule()
-        # read rule name
-        rule.rule_name = fin.readline()
-        # read the number of signature fragments
-        rule.sfs_count = int(fin.readline())
-        for j in range(rule.sfs_count):
-            # read distance relation type
-            signature_fragment = SignatureFragment()
-            signature_fragment.type = int(fin.readline())
-            if signature_fragment.type == DistanceRelation.RELATION_STAR:
-                pass
-            elif signature_fragment.type == DistanceRelation.RELATION_MIN:
-                signature_fragment.min = int(fin.readline())
-            elif signature_fragment.type == DistanceRelation.RELATION_EXACT:
-                signature_fragment.min = int(fin.readline())
-            elif signature_fragment.type == DistanceRelation.RELATION_MAX:
-                signature_fragment.max = int(fin.readline())
-            else:
-                signature_fragment.min = int(fin.readline())
-                signature_fragment.max = int(fin.readline())
+# def read_clamav_rules(filename):
+#     fin = open(filename, 'r')
+#     rules = []
+#     # read the number of rules
+#     number_of_rules = int(fin.readline())
+#     for i in range(number_of_rules):
+#         rule = Rule()
+#         # read rule name
+#         rule.rule_name = fin.readline()
+#         # read the number of signature fragments
+#         rule.sfs_count = int(fin.readline())
+#         for j in range(rule.sfs_count):
+#             # read distance relation type
+#             signature_fragment = SignatureFragment()
+#             signature_fragment.type = int(fin.readline())
+#             if signature_fragment.type == DistanceRelation.RELATION_STAR:
+#                 pass
+#             elif signature_fragment.type == DistanceRelation.RELATION_MIN:
+#                 signature_fragment.min = int(fin.readline())
+#             elif signature_fragment.type == DistanceRelation.RELATION_EXACT:
+#                 signature_fragment.min = int(fin.readline())
+#             elif signature_fragment.type == DistanceRelation.RELATION_MAX:
+#                 signature_fragment.max = int(fin.readline())
+#             else:
+#                 signature_fragment.min = int(fin.readline())
+#                 signature_fragment.max = int(fin.readline())
 
-            signature_fragment.rule = rule
-            # read hex string, convert to 
-            hexstring = fin.readline()
-            signature_fragment.hexstring = hexstring
-            signature_fragment.len = (len(hexstring) - 1) / 2
-            for k in range(signature_fragment.len):
-                signature_fragment.s.append(convert_hex_to_int(hexstring[2 * k], hexstring[2 * k + 1]))
-            rule.sfs.append(signature_fragment)
+#             signature_fragment.rule = rule
+#             # read hex string, convert to 
+#             hexstring = fin.readline()
+#             signature_fragment.hexstring = hexstring
+#             signature_fragment.len = (len(hexstring) - 1) / 2
+#             for k in range(signature_fragment.len):
+#                 signature_fragment.s.append(convert_hex_to_int(hexstring[2 * k], hexstring[2 * k + 1]))
+#             rule.sfs.append(signature_fragment)
         
-        rules.append(rule)
+#         rules.append(rule)
 
-    fin.close()
-    return rules
+#     fin.close()
+#     return rules
 
 class Edge(object):
     def __init__(self):
         self.token = 0 # of type int, 0-255
         self.state_number = 0 # of type int
+
+    def print_edge(self):
+        print 'token:'
+        print chr(self.token)
+        print 'state_number:'
+        print self.state_number
 
 class State(object):
     def __init__(self):
@@ -236,6 +242,20 @@ class State(object):
         self.edges = [] # contains edges
         self.output = [] # contains signature fragments
 
+    def print_state(self):
+        print 'state number:'
+        print self.state_number
+        print 'fail state number:'
+        print self.fail_state_number
+        print 'number of edges:'
+        print len(self.edges)
+        for edge in self.edges:
+            edge.print_edge()
+        print 'output:'
+        for o in self.output:
+            print o
+        print '\n'
+
 # used to build the ac graph
 def transit(states, state_number, token):
     for edge in states[state_number].edges:
@@ -243,66 +263,62 @@ def transit(states, state_number, token):
             return edge.state_number
     return -1
 
-def build_ac_graph(rules, rule_type):
-    state_count = 0
+def enter_pattern(states, pattern):
+    if isinstance(pattern, SignatureFragment):
+        s = pattern.s
+    elif isinstance(pattern, SnortContent):
+        s = pattern.content
+    else:
+        s = pattern
+
     current_state = 0
+    j = 0
+    while j < len(s):
+        next_state = transit(states, current_state, s[j])
+        if next_state == -1:
+            # did not find edge for the current pattern, add edges
+            break
+        else:
+            j = j + 1
+            current_state = next_state
+    if j == len(s):
+        # add to the output list
+        states[current_state].output.append(pattern)
+    else:
+        # add edges for the following tokens
+        while j < len(s):
+            edge = Edge()
+            edge.token = s[j]
+            edge.state_number = len(states)
+            states[current_state].edges.append(edge)
+            current_state = len(states)
+            newstate = State()
+            newstate.state_number = current_state
+            states.append(newstate)
+            j = j + 1
+        # add to the output list
+        states[current_state].output.append(pattern)
+
+def build_ac_graph_from_patterns(patterns):
+    states = []
+    states.append(State())
+    for pattern in patterns:
+        enter_pattern(states, pattern)
+    return states
+
+def build_ac_graph(rules):
     states = []
     zero_state = State()
     states.append(zero_state)
 
-    for rule in rules:
-        if rule_type == RuleType.CLAMAV:
-            sf_or_content_count = rule.sfs_count
-        else:
-            sf_or_content_count = len(rule.contents_list)
-        for j in range(sf_or_content_count):
-            #sf = rule.sfs[j]
-            if rule_type == RuleType.CLAMAV:
-                sf = rule.sfs[j]
-            else:
-                sf = rule.contents_list[j]
-            
-            current_state = 0
-            k = 0
-            
-            if rule_type == RuleType.CLAMAV:
-                content_len = len(sf.s)
-            else:
-                content_len = len(sf.content)
-
-            while k < content_len:
-                if rule_type == RuleType.CLAMAV:
-                    next_state = transit(states, current_state, sf.s[k])
-                else:
-                    next_state = transit(states, current_state, sf.content[k])
-                if next_state == -1:
-                    # did not find edge for the current token, need to add edges for the following tokens
-                    break
-                else:
-                    k = k + 1
-                    current_state = next_state
-
-            if k == content_len:
-                # the signature fragment already exists
-                # we add the the current signature fragment to the state's output list
-                states[current_state].output.append(sf)
-            else:
-                # add edges for the following tokens
-                while k < content_len:
-                    edge = Edge()
-                    if rule_type == RuleType.CLAMAV:
-                        edge.token = sf.s[k]
-                    else:
-                        edge.token = sf.content[k]
-
-                    edge.state_number = state_count + 1
-                    states[current_state].edges.append(edge)
-                    newstate = State()
-                    newstate.state_number = state_count + 1
-                    states.append(newstate)
-                    state_count = state_count + 1
-                    current_state = state_count
-                    k = k + 1
+    if isinstance(rules[0], Rule):
+        for rule in rules:
+            for pattern in rule.sfs:
+                enter_pattern(states, pattern)
+    else:
+        for rule in rules:
+            for pattern in rule.contents_list:
+                enter_pattern(states, pattern)
     return states
 
 def zero_goto_func(states, token):
@@ -316,6 +332,12 @@ def goto_func(states, state_number, token):
         return zero_goto_func(states, token)
     else:
         return transit(states, state_number, token)
+
+def print_states(states):
+    print 'number of states:'
+    print len(states)
+    for state in states:
+        state.print_state()
 
 def cal_failure_state(states):
     queue = deque()
@@ -335,12 +357,11 @@ def cal_failure_state(states):
                     break
             states[edge.state_number].fail_state_number = goto_func(states, fail_state, edge.token)
 
-            # modify the output list
-            if len(states[edge.state_number].output) > 0:
-                tmp = states[edge.state_number].fail_state_number
-                tmp = states[tmp]
-                for sf in tmp.output:
-                    states[edge.state_number].output.append(sf)
+            #modify the output list
+            tmp = states[edge.state_number].fail_state_number
+            tmp = states[tmp]
+            for sf in tmp.output:
+                states[edge.state_number].output.append(sf)
 
 def check_rule(r):
     for sf in r.sfs:
@@ -376,24 +397,37 @@ def check_rule(r):
 
 	return True
 
-def ac_inspect(states, global_state_number, token, offset, matched_rules):
-    while goto_func(states, global_state_number, token) == -1:
-        global_state_number = states[global_state_number].fail_state_number
-    global_state_number = goto_func(states, global_state_number, token)
+def ac_inspect_string(states, s):
+    state_number = 0
+    matched_patterns = []
+    for token in s:
+        while goto_func(states, state_number, token) == -1:
+            state_number = states[state_number].fail_state_number
+        state_number = goto_func(states, state_number, token)
+        if len(states[state_number].output) > 0:
+            for pattern in states[state_number].output:
+                matched_patterns.append(pattern)
+    
+    return matched_patterns
 
-    if len(states[global_state_number].output) > 0:
-        # check if the corresponding rules are matched
-        for sf in states[global_state_number].output:
-            sf.hit = True
-            sf.offset = offset
-            if sf.rule.check_rule():
-                if sf.rule.hit:
-                    pass
-                else:
-                    sf.rule.hit = True
-                    matched_rules.append(sf.rule)
-        global_state_number = 0
-    return global_state_number
+# def ac_inspect(states, global_state_number, token, offset, matched_rules):
+#     while goto_func(states, global_state_number, token) == -1:
+#         global_state_number = states[global_state_number].fail_state_number
+#     global_state_number = goto_func(states, global_state_number, token)
+
+#     if len(states[global_state_number].output) > 0:
+#         # check if the corresponding rules are matched
+#         for sf in states[global_state_number].output:
+#             sf.hit = True
+#             sf.offset = offset
+#             if sf.rule.check_rule():
+#                 if sf.rule.hit:
+#                     pass
+#                 else:
+#                     sf.rule.hit = True
+#                     matched_rules.append(sf.rule)
+#         global_state_number = 0
+#     return global_state_number
 
 class ACInspect(object):
     def __init__(self):
@@ -404,10 +438,29 @@ class ACInspect(object):
         self.offset = 0
         self.rule_type = RuleType.CLAMAV
 
+    def ac_inspect(self, states, global_state_number, token, offset, matched_rules):
+        while goto_func(states, global_state_number, token) == -1:
+            global_state_number = states[global_state_number].fail_state_number
+        global_state_number = goto_func(states, global_state_number, token)
+
+        if len(states[global_state_number].output) > 0:
+            # check if the corresponding rules are matched
+            for sf in states[global_state_number].output:
+                sf.hit = True
+                sf.offset = offset
+                if sf.rule.check_rule():
+                    if sf.rule.hit:
+                        pass
+                    else:
+                        sf.rule.hit = True
+                        matched_rules.append(sf.rule)
+            global_state_number = 0
+        return global_state_number
+        
     # called in a loop to perform inspection
     def inspect(self, data):
         for token in data:
-            value = ac_inspect(self.states, self.global_state_number, token, self.offset, self.matched_rules)
+            value = self.ac_inspect(self.states, self.global_state_number, token, self.offset, self.matched_rules)
             self.global_state_number = value
             self.offset = self.offset + 1
         
@@ -425,16 +478,104 @@ class ACInspect(object):
 
     def initialize_ac_inspect(self, filename, rule_type):
         if rule_type == RuleType.CLAMAV:
-            self.rules = read_rules(filename)
+            self.rules = self.read_clamav_rules(filename)
         elif rule_type == RuleType.SNORT:
-            self.rules = read_snort_rules(filename)
+            self.rules = self.read_snort_rules(filename)
         else:
             print 'unsupported rule type'
             return
         
         self.rule_type = rule_type
-        self.states = build_ac_graph(self.rules, rule_type)
+        self.states = build_ac_graph(self.rules)
         cal_failure_state(self.states)
+    
+    def read_snort_rules(self, filename):
+        fin = open(filename, 'r')
+        lines = fin.readlines()
+        fin.close()
+        rules = []
+        for line in lines:
+            if 'content:"' in line:
+                print 'processing ' + line
+                rule = SnortRule()
+                rules.append(rule)
+                splits = line.split(';')
+                for sp in splits:
+                    if ' sid:' in sp:
+                        idx = sp.find(':')
+                        rule.sid = int(sp[idx + 1:])
+
+                    if 'content:"' in sp:
+                        snort_content = SnortContent()
+                        snort_content.rule = rule
+                        substrings = sp.split(',')
+                        for s in substrings:
+                            if 'content:"' in s:
+                                # we set content here
+                                begin_idx = s.find('"') + 1
+                                end_idx = s.find('"', begin_idx)
+                                snort_content.content = cal_content(s[begin_idx: end_idx])
+                            elif 'distance' in s:
+                                # we set distance here
+                                idx = s.find(' ')
+                                snort_content.has_distance = True
+                                try:
+                                    snort_content.distance = int(s[idx + 1:])
+                                except ValueError:
+                                    snort_content.has_distance = False
+                            elif 'within' in s:
+                                # we set within here
+                                idx = s.find(' ')
+                                snort_content.has_within = True
+                                try:
+                                    snort_content.within = int(s[idx + 1:])
+                                except ValueError:
+                                    snort_content.has_within = False
+
+                        rule.contents_list.append(snort_content)
+
+        return rules
+
+    def read_clamav_rules(self, filename):
+        fin = open(filename, 'r')
+        rules = []
+        # read the number of rules
+        number_of_rules = int(fin.readline())
+        for i in range(number_of_rules):
+            rule = Rule()
+            # read rule name
+            rule.rule_name = fin.readline()
+            # read the number of signature fragments
+            rule.sfs_count = int(fin.readline())
+            for j in range(rule.sfs_count):
+                # read distance relation type
+                signature_fragment = SignatureFragment()
+                signature_fragment.type = int(fin.readline())
+                if signature_fragment.type == DistanceRelation.RELATION_STAR:
+                    pass
+                elif signature_fragment.type == DistanceRelation.RELATION_MIN:
+                    signature_fragment.min = int(fin.readline())
+                elif signature_fragment.type == DistanceRelation.RELATION_EXACT:
+                    signature_fragment.min = int(fin.readline())
+                elif signature_fragment.type == DistanceRelation.RELATION_MAX:
+                    signature_fragment.max = int(fin.readline())
+                else:
+                    signature_fragment.min = int(fin.readline())
+                    signature_fragment.max = int(fin.readline())
+
+                signature_fragment.rule = rule
+                # read hex string, convert to 
+                hexstring = fin.readline()
+                signature_fragment.hexstring = hexstring
+                signature_fragment.len = (len(hexstring) - 1) / 2
+                for k in range(signature_fragment.len):
+                    signature_fragment.s.append(convert_hex_to_int(hexstring[2 * k], hexstring[2 * k + 1]))
+                rule.sfs.append(signature_fragment)
+            
+            rules.append(rule)
+
+        fin.close()
+        return rules
         
 def print_sf(sf):
     print sf.type
@@ -455,12 +596,24 @@ def print_rules(rules):
         print_rule(rule)
 
 if __name__ == '__main__':
+    # patterns = []
+    # patterns.append(bytearray('he'))
+    # patterns.append(bytearray('she'))
+    # patterns.append(bytearray('his'))
+    # patterns.append(bytearray('hers'))
+    # states = build_ac_graph_from_patterns(patterns)
+    # cal_failure_state(states)
+    # print_states(states)
+    # s = bytearray('heshehishers she will lead a happy life with me')
+    # matched_patterns = ac_inspect_string(states, s)
+    # for pattern in matched_patterns:
+    #     print pattern
+
     ac_inspect = ACInspect()
     ac_inspect.initialize_ac_inspect('rules_2000', RuleType.CLAMAV)
-    fin = open('rules_2000', 'r')
-    lines = fin.readlines()
+    fin = open('bigger.pcap', 'r')
+    data = fin.read()
+    data = bytearray(data)
     fin.close()
-    for line in lines:
-        ac_inspect.inspect(bytearray(line))
-
+    ac_inspect.inspect(data)
     print_rules(ac_inspect.matched_rules)
