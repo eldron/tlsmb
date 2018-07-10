@@ -50,10 +50,21 @@ struct signature_fragment{
 	unsigned char * s;
 	unsigned char hit;
 	struct clamav_rule * rule;
-	unsigned char * converted;
+	//unsigned char * converted;
 	int len;
 	int offset;// set during inspection
 };
+
+void initialize_signature_fragment(struct signature_fragment * sf){
+	sf->type = 0;
+	sf->min = 0;
+	sf->max = 0;
+	sf->s = NULL;
+	sf->hit = 0;
+	sf->rule = NULL;
+	sf->len = 0;
+	sf->offset = 0;
+}
 
 struct snort_content{
 	unsigned char * content;
@@ -73,6 +84,16 @@ struct clamav_rule{
 	struct signature_fragment sfs[30];
 	int hit;// for debug
 };
+
+void initialize_clamav_rule(struct clamav_rule * rule){
+	rule->rulename = NULL;
+	rule->sfs_count = 0;
+	int i;
+	for(i = 0;i < 30;i++){
+		initialize_signature_fragment(&(rule->sfs[i]));
+	}
+	rule->hit = 0;
+}
 
 struct snort_rule{
 	int sid;
@@ -160,7 +181,6 @@ struct signature_fragment * get_signature_fragment(){
 		sf->s = NULL;
 		sf->hit = 0;
 		sf->rule = NULL;
-		sf->converted = NULL;
 		sf->len = 0;
 		sf->offset = 0;
 		return sf;
@@ -189,6 +209,18 @@ void init_snort_content(struct snort_content * c){
 	c->hit = 0;
 	c->offset = 0;
 	c->rule = NULL;
+}
+
+struct clamav_rule * get_clamav_rule(){
+	if(mem_pool_idx + sizeof(struct clamav_rule) > mem_pool_max){
+		fprintf(stderr, "mem pool not enough\n");
+		return NULL;
+	} else {
+		struct clamav_rule * rule = (struct clamav_rule *) &(mem_pool[mem_pool_idx]);
+		mem_pool_idx += sizeof(struct clamav_rule);
+		initialize_clamav_rule(rule);
+		return rule;
+	}
 }
 
 struct snort_rule * get_snort_rule(){
@@ -257,54 +289,81 @@ int check_snort_rule(struct snort_rule * rule){
 	}
 }
 
-int char_to_int(char a){
+// int char_to_int(char a){
+// 	if('0' <= a && a <= '9'){
+// 		return a - '0';
+// 	} else if ('a' <= a && a <= 'f'){
+// 		return a - 'a' + 10;
+// 	} else {
+// 		return a - 'A' + 10;
+// 	}
+// }
+
+// int convert_hex_to_int(char a, char b){
+// 	unsigned high = char_to_int(a);
+// 	unsigned low = char_to_int(b);
+// 	return (high << 4) | low;
+// }
+
+unsigned char convert_hex_to_uint8(char a, char b){
+	unsigned int high;
+	unsigned int low;
 	if('0' <= a && a <= '9'){
-		return a - '0';
-	} else if ('a' <= a && a <= 'f'){
-		return a - 'a' + 10;
+		high = a - '0';
+	} else if('a' <= a && a <= 'f'){
+		high = a - 'a' + 10;
+	} else if('A' <= a && a <= 'F'){
+		high = a - 'A' + 10;
 	} else {
-		return a - 'A' + 10;
+		fprintf(stderr, "error in convert_hex_to_uint8, a = %d\n", (int) a);
 	}
+
+	if('0' <= b && b <= '9'){
+		low = b - '0';
+	} else if('a' <= b && b <= 'f'){
+		low = b - 'a' + 10;
+	} else if('A' <= b && b <= 'F'){
+		low = b - 'A' + 10;
+	} else {
+		fprintf(stderr, "error in convert_hex_to_uint8, b = %d\n", (int) b);
+	}
+
+	return (uint8_t) ((high << 4) | low);
 }
 
-int convert_hex_to_int(char a, char b){
-	unsigned high = char_to_int(a);
-	unsigned low = char_to_int(b);
-	return (high << 4) | low;
-}
-// input: s, s_len
-// output: content, content_len
-void cal_content(char * s, int s_len, int * content, int * content_len){
-	int hex_begin = 0;
-	int i = 0;
-	*content_len = 0;
-	while(i < s_len){
-		if(s[i] == '|'){
-			if(hex_begin){
-				hex_begin = 0;
-			} else {
-				hex_begin = 1;
-			}
-			i++;
-		} else {
-			if(hex_begin){
-				if(s[i] == ' '){
-					i++;
-				} else {
-					// convert 2 bytes to int value
-					content[*content_len] = convert_hex_to_int(s[i], s[i + 1]);
-					(*content_len)++;
-					i = i + 2;
-				}
-			} else {
-				// convert the current byte to int value
-				content[*content_len] = char_to_int(s[i]);
-				(*content_len)++;
-				i++;
-			}
-		}
-	}
-}
+// // input: s, s_len
+// // output: content, content_len
+// void cal_content(char * s, int s_len, unsigned char * content, int * content_len){
+// 	int hex_begin = 0;
+// 	int i = 0;
+// 	*content_len = 0;
+// 	while(i < s_len){
+// 		if(s[i] == '|'){
+// 			if(hex_begin){
+// 				hex_begin = 0;
+// 			} else {
+// 				hex_begin = 1;
+// 			}
+// 			i++;
+// 		} else {
+// 			if(hex_begin){
+// 				if(s[i] == ' '){
+// 					i++;
+// 				} else {
+// 					// convert 2 bytes to int value
+// 					content[*content_len] = convert_hex_to_uint8(s[i], s[i + 1]);
+// 					(*content_len)++;
+// 					i = i + 2;
+// 				}
+// 			} else {
+// 				// convert the current byte to int value
+// 				content[*content_len] = char_to_int(s[i]);
+// 				(*content_len)++;
+// 				i++;
+// 			}
+// 		}
+// 	}
+// }
 
 // used to build the ac graph
 int transit(struct state * states, int state_number, unsigned char token){
@@ -620,85 +679,118 @@ void snort_ac_inspect(struct state * states, int * global_state_number,
 	}
 }
 
-// void read_clamav_rules(char * buffer, char * filename, uint8_t * converted_buffer){
-// 	int idx = 0;
-// 	int converted_idx = 0;
+void read_type(FILE * fin, int * type, int * min, int * max){
+	char c[10];
+	memset(c, '\0', 10);
+	fgets(c, 10, fin);
+	*type = atoi(c);
+	if(*type == RELATION_STAR){
 
-// 	FILE * fin = fopen(filename, "r");
-// 	// read the number of rules
-// 	char s[LINELEN];
-// 	memset(s, '\0', LINELEN);
-// 	fgets(s, LINELEN, fin);
-// 	number_of_rules = atoi(s);
-// 	//fprintf(stderr, "number_of_rules = %d\n", number_of_rules);
+	} else if(*type == RELATION_MIN || *type == RELATION_EXACT){
+		memset(c, '\0', 10);
+		fgets(c, 10, fin);
+		*min = atoi(c);
+	} else if(*type == RELATION_MAX){
+		memset(c, '\0', 10);
+		fgets(c, 10, fin);
+		*max = atoi(c);
+	} else if(*type == RELATION_MINMAX){
+		memset(c, '\0', 10);
+		fgets(c, 10, fin);
+		*min = atoi(c);
+		memset(c, '\0', 10);
+		fgets(c, 10, fin);
+		*max = atoi(c);
+	}
+}
 
-// 	int i;
-// 	for(i = 0;i < number_of_rules;i++){
-// 		//fprintf(stderr, "reading rule %d\n", i);
-// 		// read rule name
-// 		memset(s, '\0', LINELEN);
-// 		fgets(s, LINELEN, fin);
-// 		if(idx + strlen(s) + 1 >= BUFFER_SIZE){
-// 			fprintf(stderr, "BUFFER_SIZE too small\n");
-// 			exit(1);
-// 		}
-// 		memcpy(&(buffer[idx]), s, strlen(s) + 1);
-// 		short_rules[i].rulename = &(buffer[idx]);
-// 		idx += strlen(s) + 1;
+// for testing
+void print_type(int type, int min, int max){
+	
+}
+unsigned char * convert_hex_to_unsigned_char(char * s, struct signature_fragment * sf){
+	int len = strlen(s) - 1;
+	int k = 0;
+	len = len / 2;
+	sf->len = len;
+	sf->s = get_unsigned_char_array(len);
+	for(k = 0;k < len;k++){
+		sf->s[k] = convert_hex_to_uint8(s[2 * k], s[2 * k + 1]);
+	}
+}
 
-// 		// read the number of signature fragments
-// 		memset(s, '\0', LINELEN);
-// 		fgets(s, LINELEN, fin);
-// 		short_rules[i].sfs_count = atoi(s);
+// for testing
+void print_clamav_rules(struct list_node ** rules, int total_number_of_rules){
+	// print total number of rules
+	printf("%d\n", total_number_of_rules);
 
-// 		// read the signature fragments
-// 		int j;
-// 		for(j = 0;j < short_rules[i].sfs_count;j++){
-// 			int type;
-// 			int min;
-// 			int max;
-// 			read_type(fin, &type, &min, &max);
+	struct list_node * head = *rules;
+	while(head){
+		struct clamav_rule * rule = (struct clamav_rule *) head->ptr;
+		head = head->next;
 
-// 			memset(s, '\0', LINELEN);
-// 			fgets(s, LINELEN, fin);
-// 			if(idx + strlen(s) + 1 >= BUFFER_SIZE){
-// 				fprintf(stderr, "BUFFER_SIZE too small\n");
-// 				exit(1);
-// 			}
-// 			memcpy(&(buffer[idx]), s, strlen(s) + 1);
-// 			//short_rules[i].sfs[j] = &(buffer[idx]);
-// 			short_rules[i].sfs[j].s = &(buffer[idx]);
-// 			short_rules[i].sfs[j].hit = 0;
-// 			short_rules[i].sfs[j].rule_ptr = (void *) (&(short_rules[i]));
-// 			short_rules[i].sfs[j].type = type;
-// 			short_rules[i].sfs[j].min = min;
-// 			short_rules[i].sfs[j].max = max;
-// 			short_rules[i].sfs[j].hit = 0;
-// 			short_rules[i].sfs[j].offset = 0;
+		// print rule name
+		printf("%s", rule->rulename);
 
-// 			idx += strlen(s) + 1;
-// 		}
+		// print the number of signature fragments
+		printf("%d\n", rule->sfs_count);
 
-// 		// convert the signature fragments
-// 		for(j = 0;j < short_rules[i].sfs_count;j++){
-// 			int len = strlen(short_rules[i].sfs[j].s) - 1;
-// 			int k = 0;
-// 			len = len / 2;
-// 			short_rules[i].sfs[j].len = len;
-// 			short_rules[i].sfs[j].converted = (uint8_t *) (&(converted_buffer[converted_idx]));
-// 			for(k = 0;k < len;k++){
-// 				converted_buffer[converted_idx] = convert_hex_to_uint8(short_rules[i].sfs[j].s[2 * k], short_rules[i].sfs[j].s[2 * k + 1]);
-// 				converted_idx++;
-// 				if(converted_idx >= CONVERTED_BUFFER_SIZE){
-// 					fprintf(stderr, "CONVERTED_BUFFER_SIZE too small\n");
-// 					exit(1);
-// 				}
-// 			}
-// 		}
-// 	}
+		int i;
+		for(i = 0;i < rule->sfs_count;i++){
 
-// 	fclose(fin);
-// }
+		}
+	}
+}
+int read_clamav_rules(char * filename, struct list_node ** rules, int number_of_rules){
+	FILE * fin = fopen(filename, "r");
+	// read total number of rules
+	char s[LINELEN];
+	memset(s, '\0', LINELEN);
+	fgets(s, LINELEN, fin);
+	int total_number_of_rules = atoi(s);
+	if(number_of_rules == -1){
+		number_of_rules = total_number_of_rules;
+	}
+
+	struct list_node * tail = NULL;
+	int i;
+	for(i = 0;i < number_of_rules;i++){
+		//fprintf(stderr, "reading rule %d\n", i);
+		struct clamav_rule * rule = get_clamav_rule();
+		enqueue(rules, &tail, rule);
+
+		// read rule name
+		memset(s, '\0', LINELEN);
+		fgets(s, LINELEN, fin);
+		rule->rulename = (char *) get_unsigned_char_array(strlen(s) + 1);
+		memcpy(rule->rulename, s, strlen(s) + 1);
+
+		// read the number of signature fragments
+		memset(s, '\0', LINELEN);
+		fgets(s, LINELEN, fin);
+		rule->sfs_count = atoi(s);
+
+		// read the signature fragments
+		int j;
+		for(j = 0;j < rule->sfs_count;j++){
+			int type;
+			int min;
+			int max;
+			read_type(fin, &type, &min, &max);
+
+			memset(s, '\0', LINELEN);
+			fgets(s, LINELEN, fin);
+			convert_hex_to_unsigned_char(s, &(rule->sfs[j]));// s and len are set
+			rule->sfs[j].rule = rule;
+			rule->sfs[j].type = type;
+			rule->sfs[j].min = min;
+			rule->sfs[j].max = max;
+		}
+	}
+
+	fclose(fin);
+	return total_number_of_rules;
+}
 
 // for testing
 void print_snort_rules(struct list_node * rules, int total_number_of_rules){
