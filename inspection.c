@@ -39,14 +39,27 @@ struct list_node{
 	struct list_node * next;
 };
 
-void push(struct list_node * head, void * ptr){
-	if(head->ptr == NULL){
-		head->ptr = ptr;
+// void push(struct list_node * head, void * ptr){
+// 	if(head->ptr == NULL){
+// 		head->ptr = ptr;
+// 	} else {
+// 		struct list_node * node = get_list_node();
+// 		node->ptr = ptr;
+// 		node->next = head->next;
+// 		head->next = node;
+// 	}
+// }
+
+void push(struct list_node ** head, void * ptr){
+	struct list_node * node = get_list_node();
+	node->ptr = ptr;
+	node->next = NULL;
+
+	if(*head == NULL){
+		*head = node;
 	} else {
-		struct list_node * node = get_list_node();
-		node->ptr = ptr;
-		node->next = head->next;
-		head->next = node;
+		node->next = (*head)->next;
+		*head = node;
 	}
 }
 
@@ -73,7 +86,7 @@ struct state{
 	int state_number;
 	struct edge edges[256];
 	int fail_state_number;
-	struct list_node output;
+	struct list_node * output;
 };
 
 struct state * initialize_states(){
@@ -88,8 +101,7 @@ struct state * initialize_states(){
 			states[i].edges[j].state_number = -2;
 		}
 		states[i].fail_state_number = -1;
-		states[i].output.ptr = NULL;
-		states[i].output.next = NULL;
+		states[i].output = NULL;
 	}
 }
 
@@ -399,42 +411,71 @@ void cal_failure_state(struct state * states){
 			int state_number = e->state_number;
 			if(state_number != -2){
 				queue[tail] = &(states[state_number]);
+				tail++;
 				int fail_state = current_state->fail_state_number;
 				while(1){
 					if(goto_func(states, fail_state, e->token) == -1){
 						fail_state = states[fail_state].fail_state_number;
+					} else {
+						break;
 					}
+				}
+				states[e->state_number].fail_state_number = goto_func(states, fail_state, e->token);
+
+				// modify the output list
+				int tmp = states[e->state_number].fail_state_number;
+				struct list_node * head = states[tmp].output;
+				while(head){
+					push(&(states[e->state_number].output), head->ptr);
+					head = head->next;
 				}
 			}
 		}
 	}
 }
-def cal_failure_state(states):
-    queue = deque()
-    for edge in states[0].edges:
-        if edge.state_number == -2:
-            pass
-        else:
-            states[edge.state_number].fail_state_number = 0
-            queue.append(states[edge.state_number])
 
-    while len(queue) > 0:
-        current = queue.popleft()
-        for edge in current.edges:
-            if edge.state_number == -2:
-                pass
-            else:
-                queue.append(states[edge.state_number])
-                fail_state = current.fail_state_number
-                while True:
-                    if goto_func(states, fail_state, edge.token) == -1:
-                        fail_state = states[fail_state].fail_state_number
-                    else:
-                        break
-                states[edge.state_number].fail_state_number = goto_func(states, fail_state, edge.token)
+int check_clamav_rule(struct clamav_rule * rule){
+	int i;
+	for(i = 0;i < rule->sfs_count;i++){
+		if(rule->sfs[i].hit == 0){
+			return 0;
+		}
+	}
 
-                #modify the output list
-                tmp = states[edge.state_number].fail_state_number
-                tmp = states[tmp]
-                for sf in tmp.output:
-                    states[edge.state_number].output.append(sf)
+	// check distance relation ship between the signature fragments
+	i = 1;
+	while(i < rule->sfs_count){
+		if(rule->sfs[i].type == RELATION_STAR){
+
+		} else if(rule->sfs[i].type == RELATION_EXACT){
+            if(rule->sfs[i - 1].offset + rule->sfs[i].len + rule->sfs[i].min == rule->sfs[i].offset){
+                
+			} else{
+				return 0;
+			}
+		} else if(rule->sfs[i].type == RELATION_MIN){
+            if(rule->sfs[i - 1].offset + rule->sfs[i].len + rule->sfs[i].min <= rule->sfs[i].offset){
+
+			} else {
+				return 0;
+			}
+		} else if(rule->sfs[i].type == RELATION_MAX){
+            if(rule->sfs[i - 1].offset + rule->sfs[i].len + rule->sfs[i].max >= rule->sfs[i].offset){
+
+			} else {
+				return 0;
+			}
+		} else {
+            if(rule->sfs[i - 1].offset + rule->sfs[i].len + rule->sfs[i].min <= rule->sfs[i].offset && 
+			rule->sfs[i - 1].offset + rule->sfs[i].len + rule->sfs[i].max >= rule->sfs[i].offset){
+
+			} else {
+				return 0;
+			}
+		}
+        i = i + 1;
+	}
+
+	return 1;
+}
+
