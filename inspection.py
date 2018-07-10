@@ -404,6 +404,41 @@ class ACInspect(object):
         self.states = build_ac_graph(self.rules, rule_type)
         cal_failure_state(self.states)
     
+    def write_snort_rules_to_file(self, rules, filename):
+        fout = open(filename, 'w')
+        # write the number of rules
+        fout.write(str(len(rules)) + '\n')
+        for rule in rules:
+            # write sid
+            fout.write(str(rule.sid) + '\n')
+            # write the number of contents
+            fout.write(str(len(rule.contents_list)) + '\n')
+            for content in rule.contents_list:
+                # write has_distance, distance, has_within and within
+                if content.has_distance:
+                    fout.write('1\n')
+                    fout.write(str(content.distance) + '\n')
+                else:
+                    fout.write('0\n')
+                
+                if content.has_within:
+                    fout.write('1\n')
+                    fout.write(str(content.within) + '\n')
+                else:
+                    fout.write('0\n')
+                
+                # write content length
+                fout.write(str(len(content.content)) + '\n')
+                for value in content.content:
+                    fout.write(str(value) + '\n')
+
+    def get_max_contents_list_len(self, rules):
+        max = 0
+        for rule in rules:
+            if max < len(rule.contents_list):
+                max = len(rule.contents_list)
+        return max
+    
     def read_snort_rules(self, filename):
         fin = open(filename, 'r')
         lines = fin.readlines()

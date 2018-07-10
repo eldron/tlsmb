@@ -22,45 +22,72 @@
 #define MAX_RULE_NUMBER 100300
 #define AC_BATCH_SIZE 2000
 
-char * mem_pool;
+unsigned char * mem_pool;
 int mem_pool_max;
 int mem_pool_idx;
-
-void initialize_mem_pool(){
-	mem_pool_max = LIST_POOL_SIZE * sizeof(struct list_node);
-	mem_pool_max += MAX_STATES * sizeof(struct state);
-	
-	mem_pool = (char *) malloc(mem_pool_max);
-	mem_pool_idx = 0;
-}
 
 struct list_node{
 	void * ptr;
 	struct list_node * next;
 };
 
-// void push(struct list_node * head, void * ptr){
-// 	if(head->ptr == NULL){
-// 		head->ptr = ptr;
-// 	} else {
-// 		struct list_node * node = get_list_node();
-// 		node->ptr = ptr;
-// 		node->next = head->next;
-// 		head->next = node;
-// 	}
-// }
+struct edge{
+	unsigned char token;
+	int state_number;// initialize to -2
+};
 
-void push(struct list_node ** head, void * ptr){
-	struct list_node * node = get_list_node();
-	node->ptr = ptr;
-	node->next = NULL;
+struct state{
+	int state_number;
+	struct edge edges[256];
+	int fail_state_number;
+	struct list_node * output;
+};
 
-	if(*head == NULL){
-		*head = node;
-	} else {
-		node->next = (*head)->next;
-		*head = node;
-	}
+struct signature_fragment{
+	int type;
+	int min;
+	int max;
+	unsigned char * s;
+	unsigned char hit;
+	struct clamav_rule * rule;
+	unsigned char * converted;
+	int len;
+	int offset;// set during inspection
+};
+
+struct snort_content{
+	unsigned char * content;
+	int content_len;
+	int distance;
+	int within;
+	unsigned char has_distance;
+	unsigned char has_within;
+	unsigned char hit;
+	int offset;// set during inspection
+	struct snort_rule * rule;
+};
+
+struct clamav_rule{
+	char * rulename;
+	int sfs_count;
+	struct signature_fragment sfs[30];
+	int hit;// for debug
+};
+
+struct snort_rule{
+	int sid;
+	int hit;
+	struct snort_content contents[30];
+	int content_list_len;
+};
+
+void initialize_mem_pool(){
+	mem_pool_max = 1024 * 1024 * 1024;
+	
+	mem_pool = (unsigned char *) malloc(mem_pool_max);
+	mem_pool_idx = 0;
+
+	fprintf(stderr, "mem_pool_max = %d\n", mem_pool_max);
 }
 
 struct list_node * get_list_node_helper(char * buffer, int *idx, int max){
@@ -77,17 +104,31 @@ struct list_node * get_list_node(){
 	return get_list_node_helper(mem_pool, &mem_pool_idx, mem_pool_max);
 }
 
-struct edge{
-	unsigned char token;
-	int state_number;// initialize to -2
-};
+void push(struct list_node ** head, void * ptr){
+	struct list_node * node = get_list_node();
+	node->ptr = ptr;
+	node->next = NULL;
 
-struct state{
-	int state_number;
-	struct edge edges[256];
-	int fail_state_number;
-	struct list_node * output;
-};
+	if(*head == NULL){
+		*head = node;
+	} else {
+		node->next = *head;
+		*head = node;
+	}
+}
+
+void enqueue(struct list_node ** head, struct list_node ** tail, void * ptr){
+	struct list_node * node = get_list_node();
+	node->ptr = ptr;
+	node->next = NULL;
+
+	if(*head == NULL){
+		*head = *tail = node;
+	} else {
+		(*tail)->next = node;
+		*tail = node;
+	}
+}
 
 struct state * initialize_states(){
 	struct state * states = (struct state *) &(mem_pool[mem_pool_idx]);
@@ -105,36 +146,38 @@ struct state * initialize_states(){
 	}
 }
 
-struct signature_fragment{
-	int type;
-	int min;
-	int max;
-	unsigned char * s;
-	int hit;
-	void * rule_ptr;
-	unsigned char * converted;
-	int len;
-	int offset;// set during inspection
-};
+struct signature_fragment * get_signature_fragment(){
+	if(mem_pool_idx + sizeof(struct signature_fragment) >= mem_pool_max){
+		fprintf(stderr, "memory pool not enough\n");
+		return NULL;
+	} else {
+		struct signature_fragment * sf = (struct signature_fragment *) &(mem_pool[mem_pool_idx]);
+		mem_pool_idx += sizeof(struct signature_fragment);
 
-struct clamav_rule{
-	char * rulename;
-	int sfs_count;
-	struct signature_fragment sfs[30];
-	int hit;// for debug
-};
+		sf->type = 0;
+		sf->min = 0;
+		sf->max = 0;
+		sf->s = NULL;
+		sf->hit = 0;
+		sf->rule = NULL;
+		sf->converted = NULL;
+		sf->len = 0;
+		sf->offset = 0;
+		return sf;
+	}
+}
 
-struct snort_content{
-	unsigned char * content;
-	int content_len;
-	int distance;
-	int within;
-	unsigned char has_distance;
-	unsigned char has_within;
-	unsigned char hit;
-	int offset;// set during inspection
-	struct snort_rule * rule;
-};
+
+unsigned char * get_unsigned_char_array(int len){
+	if(mem_pool_idx + len > mem_pool_max){
+		fprintf(stderr, "mem pool not enough\n");
+		return NULL;
+	} else {
+		unsigned char * tmp = &(mem_pool[mem_pool_idx]);
+		mem_pool_idx += len;
+		return tmp;
+	}
+}
 
 void init_snort_content(struct snort_content * c){
 	c->content = NULL;
@@ -148,18 +191,35 @@ void init_snort_content(struct snort_content * c){
 	c->rule = NULL;
 }
 
-struct snort_rule{
-	int sid;
-	unsigned char hit;
-	struct snort_content contents[30];
-	int content_list_len;
-};
+struct snort_rule * get_snort_rule(){
+	if(mem_pool_idx + sizeof(struct snort_rule) > mem_pool_max){
+		fprintf(stderr, "mem pool not enough\n");
+		return NULL;
+	} else {
+		struct snort_rule * rule = (struct snort_rule *) &(mem_pool[mem_pool_idx]);
+		mem_pool_idx += sizeof(struct snort_rule);
 
-void init_snort_rule(struct snort_rule * rule){
-	rule->sid = 0;
-	rule->hit = 0;
-	rule->content_list_len = 0;
+		//fprintf(stderr, "hello 1\n");
+
+		rule->sid = 0;
+		rule->hit = 0;
+		rule->content_list_len = 0;
+		//fprintf(stderr, "before init snort content\n");
+		int i;
+		for(i = 0;i < 30;i++){
+			init_snort_content(&(rule->contents[i]));
+		}
+
+		//fprintf(stderr, "before return\n");
+		return rule;
+	}
 }
+
+// void init_snort_rule(struct snort_rule * rule){
+// 	rule->sid = 0;
+// 	rule->hit = 0;
+// 	rule->content_list_len = 0;
+// }
 
 int check_snort_rule(struct snort_rule * rule){
 	if(rule->content_list_len > 0){
@@ -479,3 +539,305 @@ int check_clamav_rule(struct clamav_rule * rule){
 	return 1;
 }
 
+void ac_inspect_string(struct state * states, unsigned char * s, int s_len){
+	int state_number = 0;
+	int i;
+	for(i = 0;i < s_len;i++){
+		while(goto_func(states, state_number, s[i]) == -1){
+			state_number = states[state_number].fail_state_number;
+		}
+		state_number = goto_func(states, state_number, s[i]);
+		if(states[state_number].output){
+			printf("matched patterns are:\n");
+			struct list_node * head = states[state_number].output;
+			while(head){
+				printf("%s\n", (char *) head->ptr);
+				head = head->next;
+			}
+		}
+	}
+}
+
+void clamav_ac_inspect(struct state * states, int * global_state_number,
+	unsigned char token, int offset, struct list_node ** matched_rules){
+	
+	while(goto_func(states, *global_state_number, token) == -1){
+		*global_state_number = states[*global_state_number].fail_state_number;
+	}
+	*global_state_number = goto_func(states, *global_state_number, token);
+
+	if(states[*global_state_number].output){
+		// check if the corresponding rules are matched
+		struct list_node * head = states[*global_state_number].output;
+		while(head){
+			struct signature_fragment * sf = (struct signature_fragment *) head->ptr;
+			sf->hit = 1;
+			sf->offset = offset;
+			if(check_clamav_rule(sf->rule)){
+				if(sf->rule->hit){
+
+				} else {
+					sf->rule->hit = 1;
+					push(matched_rules, sf->rule);
+				}
+			}
+			head = head->next;
+		}
+
+		// reset global state number
+		*global_state_number = 0;
+	}
+}
+
+void snort_ac_inspect(struct state * states, int * global_state_number,
+	unsigned char token, int offset, struct list_node ** matched_rules){
+	
+	while(goto_func(states, *global_state_number, token) == -1){
+		*global_state_number = states[*global_state_number].fail_state_number;
+	}
+	*global_state_number = goto_func(states, *global_state_number, token);
+
+	if(states[*global_state_number].output){
+		// check if the corresponding rules are matched
+		struct list_node * head = states[*global_state_number].output;
+		while(head){
+			struct snort_content * content = (struct snort_content *) head->ptr;
+			content->hit = 1;
+			content->offset = offset;
+			if(check_snort_rule(content->rule)){
+				if(content->rule->hit){
+
+				} else {
+					content->rule->hit = 1;
+					push(matched_rules, content->rule);
+				}
+			}
+			head = head->next;
+		}
+
+		// reset global state number
+		*global_state_number = 0;
+	}
+}
+
+// void read_clamav_rules(char * buffer, char * filename, uint8_t * converted_buffer){
+// 	int idx = 0;
+// 	int converted_idx = 0;
+
+// 	FILE * fin = fopen(filename, "r");
+// 	// read the number of rules
+// 	char s[LINELEN];
+// 	memset(s, '\0', LINELEN);
+// 	fgets(s, LINELEN, fin);
+// 	number_of_rules = atoi(s);
+// 	//fprintf(stderr, "number_of_rules = %d\n", number_of_rules);
+
+// 	int i;
+// 	for(i = 0;i < number_of_rules;i++){
+// 		//fprintf(stderr, "reading rule %d\n", i);
+// 		// read rule name
+// 		memset(s, '\0', LINELEN);
+// 		fgets(s, LINELEN, fin);
+// 		if(idx + strlen(s) + 1 >= BUFFER_SIZE){
+// 			fprintf(stderr, "BUFFER_SIZE too small\n");
+// 			exit(1);
+// 		}
+// 		memcpy(&(buffer[idx]), s, strlen(s) + 1);
+// 		short_rules[i].rulename = &(buffer[idx]);
+// 		idx += strlen(s) + 1;
+
+// 		// read the number of signature fragments
+// 		memset(s, '\0', LINELEN);
+// 		fgets(s, LINELEN, fin);
+// 		short_rules[i].sfs_count = atoi(s);
+
+// 		// read the signature fragments
+// 		int j;
+// 		for(j = 0;j < short_rules[i].sfs_count;j++){
+// 			int type;
+// 			int min;
+// 			int max;
+// 			read_type(fin, &type, &min, &max);
+
+// 			memset(s, '\0', LINELEN);
+// 			fgets(s, LINELEN, fin);
+// 			if(idx + strlen(s) + 1 >= BUFFER_SIZE){
+// 				fprintf(stderr, "BUFFER_SIZE too small\n");
+// 				exit(1);
+// 			}
+// 			memcpy(&(buffer[idx]), s, strlen(s) + 1);
+// 			//short_rules[i].sfs[j] = &(buffer[idx]);
+// 			short_rules[i].sfs[j].s = &(buffer[idx]);
+// 			short_rules[i].sfs[j].hit = 0;
+// 			short_rules[i].sfs[j].rule_ptr = (void *) (&(short_rules[i]));
+// 			short_rules[i].sfs[j].type = type;
+// 			short_rules[i].sfs[j].min = min;
+// 			short_rules[i].sfs[j].max = max;
+// 			short_rules[i].sfs[j].hit = 0;
+// 			short_rules[i].sfs[j].offset = 0;
+
+// 			idx += strlen(s) + 1;
+// 		}
+
+// 		// convert the signature fragments
+// 		for(j = 0;j < short_rules[i].sfs_count;j++){
+// 			int len = strlen(short_rules[i].sfs[j].s) - 1;
+// 			int k = 0;
+// 			len = len / 2;
+// 			short_rules[i].sfs[j].len = len;
+// 			short_rules[i].sfs[j].converted = (uint8_t *) (&(converted_buffer[converted_idx]));
+// 			for(k = 0;k < len;k++){
+// 				converted_buffer[converted_idx] = convert_hex_to_uint8(short_rules[i].sfs[j].s[2 * k], short_rules[i].sfs[j].s[2 * k + 1]);
+// 				converted_idx++;
+// 				if(converted_idx >= CONVERTED_BUFFER_SIZE){
+// 					fprintf(stderr, "CONVERTED_BUFFER_SIZE too small\n");
+// 					exit(1);
+// 				}
+// 			}
+// 		}
+// 	}
+
+// 	fclose(fin);
+// }
+
+// for testing
+void print_snort_rules(struct list_node * rules, int total_number_of_rules){
+	// print total number of rules
+	printf("%d\n", total_number_of_rules);
+
+	struct list_node * head = rules;
+	while(head){
+		struct snort_rule * rule = (struct snort_rule *) head->ptr;
+		head = head->next;
+
+		// print sid
+		printf("%d\n", rule->sid);
+
+		// print the number of contents
+		printf("%d\n", rule->content_list_len);
+
+		int i;
+		for(i = 0;i < rule->content_list_len;i++){
+			// print has_distance, distance, has_within and within
+			if(rule->contents[i].has_distance){
+				printf("1\n");
+				printf("%d\n", rule->contents[i].distance);
+			} else {
+				printf("0\n");
+			}
+
+			if(rule->contents[i].has_within){
+				printf("1\n");
+				printf("%d\n", rule->contents[i].within);
+			} else {
+				printf("0\n");
+			}
+
+			// print content_len
+			printf("%d\n", rule->contents[i].content_len);
+
+			// print content
+			int j = 0;
+			for(j = 0;j < rule->contents[i].content_len;j++){
+				printf("%d\n", rule->contents[i].content[j]);
+			}
+		}
+	}
+}
+
+int read_snort_rules(char * filename, struct list_node ** rules, int number_of_rules){
+	if(*rules != NULL){
+		fprintf(stderr, "*rules is not NULL\n");
+		return 0;
+	}
+
+	struct list_node * tail = NULL;
+
+	FILE * fin = fopen(filename, "r");
+	// read total number of rules
+	char s[LINELEN];
+	memset(s, '\0', LINELEN);
+	fgets(s, LINELEN, fin);
+	int total_number_of_rules = atoi(s);
+	//fprintf(stderr, "total number of rules = %d\n", total_number_of_rules);
+
+	if(number_of_rules == -1){
+		number_of_rules = total_number_of_rules;
+	}
+
+	int i;
+	for(i = 0;i < number_of_rules;i++){
+		//fprintf(stderr, "i = %d\n", i);
+
+		struct snort_rule * rule = get_snort_rule();
+
+		//fprintf(stderr, "got rule\n");
+
+		// add rule to list
+		enqueue(rules, &tail, rule);
+
+		// read sid
+		memset(s, '\0', LINELEN);
+		fgets(s, LINELEN, fin);
+		rule->sid = atoi(s);
+
+		//fprintf(stderr, "sid = %d\n", rule->sid);
+
+		// read the number of contents
+		memset(s, '\0', LINELEN);
+		fgets(s, LINELEN, fin);
+		rule->content_list_len = atoi(s);
+
+		int j;
+		for(j = 0;j < rule->content_list_len;j++){
+			// read has_distance, distance, has_within and within
+			memset(s, '\0', LINELEN);
+			fgets(s, LINELEN, fin);
+			int has_distance = atoi(s);
+			rule->contents[j].has_distance = has_distance;
+			if(has_distance){
+				memset(s, '\0', LINELEN);
+				fgets(s, LINELEN, fin);
+				rule->contents[j].distance = atoi(s);
+			}
+
+			memset(s, '\0', LINELEN);
+			fgets(s, LINELEN, fin);
+			int has_within = atoi(s);
+			rule->contents[j].has_within = has_within;
+			if(has_within){
+				memset(s, '\0', LINELEN);
+				fgets(s, LINELEN, fin);
+				rule->contents[j].within = atoi(s);
+			}
+
+			// read content len
+			memset(s, '\0', LINELEN);
+			fgets(s, LINELEN, fin);
+			int content_len = atoi(s);
+			rule->contents[j].content_len = content_len;
+			rule->contents[j].content = get_unsigned_char_array(content_len);
+			// read content
+			int k = 0;
+			for(k = 0;k < content_len;k++){
+				memset(s, '\0', LINELEN);
+				fgets(s, LINELEN, fin);
+				rule->contents[j].content[k] = (unsigned char) atoi(s);
+			}
+		}
+	}
+
+	fclose(fin);
+	return total_number_of_rules;
+}
+
+int main(){
+	initialize_mem_pool();
+	fprintf(stderr, "mem pool initialized\n");
+
+	// test read snort rules
+	struct list_node * snort_rules = NULL;
+	int total_number_of_rules = read_snort_rules("snort_rules.txt", &snort_rules, -1);
+	print_snort_rules(snort_rules, total_number_of_rules);
+	return 0;
+}
