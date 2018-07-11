@@ -22,6 +22,10 @@
 #define MAX_RULE_NUMBER 100300
 #define AC_BATCH_SIZE 2000
 
+#define RULE_TYPE_CLAMAV 0
+#define RULE_TYPE_SNORT 1
+#define RULE_TYPE_STRING 2
+
 unsigned char * mem_pool;
 int mem_pool_max;
 int mem_pool_idx;
@@ -38,7 +42,8 @@ struct edge{
 
 struct state{
 	int state_number;
-	struct edge edges[256];
+	//struct edge edges[256];
+	struct list_node * edges;
 	int fail_state_number;
 	struct list_node * output;
 };
@@ -50,7 +55,6 @@ struct signature_fragment{
 	unsigned char * s;
 	unsigned char hit;
 	struct clamav_rule * rule;
-	//unsigned char * converted;
 	int len;
 	int offset;// set during inspection
 };
@@ -85,6 +89,27 @@ struct clamav_rule{
 	int hit;// for debug
 };
 
+struct snort_rule{
+	int sid;
+	int hit;
+	struct snort_content contents[30];
+	int content_list_len;
+};
+
+struct edge * get_edge(){
+	if(mem_pool_idx + sizeof(struct edge) > mem_pool_max){
+		fprintf(stderr, "mem not enough\n");
+		return NULL;
+	} else {
+		struct edge * e = (struct edge *) &(mem_pool[mem_pool_idx]);
+		mem_pool_idx += sizeof(struct edge);
+
+		e->token = 0;
+		e->state_number = -2;
+		return e;
+	}
+}
+
 void initialize_clamav_rule(struct clamav_rule * rule){
 	rule->rulename = NULL;
 	rule->sfs_count = 0;
@@ -95,15 +120,10 @@ void initialize_clamav_rule(struct clamav_rule * rule){
 	rule->hit = 0;
 }
 
-struct snort_rule{
-	int sid;
-	int hit;
-	struct snort_content contents[30];
-	int content_list_len;
-};
-
 void initialize_mem_pool(){
-	mem_pool_max = 1024 * 1024 * 1024;
+	mem_pool_max = MAX_STATES * sizeof(struct state);
+	mem_pool_max += LIST_POOL_SIZE;
+	mem_pool_max += EDGE_POOL_SIZE;
 	
 	mem_pool = (unsigned char *) malloc(mem_pool_max);
 	mem_pool_idx = 0;
@@ -157,14 +177,17 @@ struct state * initialize_states(){
 	int i;
 	for(i = 0;i < MAX_STATES;i++){
 		states[i].state_number = i;
-		int j;
-		for(j = 0;j < 256;j++){
-			states[i].edges[j].token = j;
-			states[i].edges[j].state_number = -2;
-		}
+		// int j;
+		// for(j = 0;j < 256;j++){
+		// 	states[i].edges[j].token = j;
+		// 	states[i].edges[j].state_number = -2;
+		// }
+		states[i].edges = NULL;
 		states[i].fail_state_number = -1;
 		states[i].output = NULL;
 	}
+
+	return states;
 }
 
 struct signature_fragment * get_signature_fragment(){
@@ -247,12 +270,6 @@ struct snort_rule * get_snort_rule(){
 	}
 }
 
-// void init_snort_rule(struct snort_rule * rule){
-// 	rule->sid = 0;
-// 	rule->hit = 0;
-// 	rule->content_list_len = 0;
-// }
-
 int check_snort_rule(struct snort_rule * rule){
 	if(rule->content_list_len > 0){
 		// check if the first content is hit
@@ -289,22 +306,6 @@ int check_snort_rule(struct snort_rule * rule){
 	}
 }
 
-// int char_to_int(char a){
-// 	if('0' <= a && a <= '9'){
-// 		return a - '0';
-// 	} else if ('a' <= a && a <= 'f'){
-// 		return a - 'a' + 10;
-// 	} else {
-// 		return a - 'A' + 10;
-// 	}
-// }
-
-// int convert_hex_to_int(char a, char b){
-// 	unsigned high = char_to_int(a);
-// 	unsigned low = char_to_int(b);
-// 	return (high << 4) | low;
-// }
-
 unsigned char convert_hex_to_uint8(char a, char b){
 	unsigned int high;
 	unsigned int low;
@@ -331,52 +332,38 @@ unsigned char convert_hex_to_uint8(char a, char b){
 	return (uint8_t) ((high << 4) | low);
 }
 
-// // input: s, s_len
-// // output: content, content_len
-// void cal_content(char * s, int s_len, unsigned char * content, int * content_len){
-// 	int hex_begin = 0;
-// 	int i = 0;
-// 	*content_len = 0;
-// 	while(i < s_len){
-// 		if(s[i] == '|'){
-// 			if(hex_begin){
-// 				hex_begin = 0;
-// 			} else {
-// 				hex_begin = 1;
-// 			}
-// 			i++;
-// 		} else {
-// 			if(hex_begin){
-// 				if(s[i] == ' '){
-// 					i++;
-// 				} else {
-// 					// convert 2 bytes to int value
-// 					content[*content_len] = convert_hex_to_uint8(s[i], s[i + 1]);
-// 					(*content_len)++;
-// 					i = i + 2;
-// 				}
-// 			} else {
-// 				// convert the current byte to int value
-// 				content[*content_len] = char_to_int(s[i]);
-// 				(*content_len)++;
-// 				i++;
-// 			}
-// 		}
-// 	}
-// }
-
 // used to build the ac graph
 int transit(struct state * states, int state_number, unsigned char token){
-	int next_state = states[state_number].edges[token].state_number;
-	if(state_number == -2){
-		return -1;
-	} else {
-		return next_state;
+	struct list_node * head = states[state_number].edges;
+	while(head){
+		struct edge * e = (struct edge *) head->ptr;
+		head = head->next;
+		if(e->token == token){
+			return e->state_number;
+		}
+	}
+	return -1;
+}
+
+struct edge zero_state_edges[256];
+
+void build_zero_state_edges(struct state * zero_state){
+	int i;
+	for(i = 0;i < 256;i++){
+		zero_state_edges[i].token = i;
+		zero_state_edges[i].state_number = -2;
+	}
+
+	struct list_node * head = zero_state->edges;
+	while(head){
+		struct edge * e = (struct edge *) head->ptr;
+		zero_state_edges[e->token].state_number = e->state_number;
+		head = head->next;
 	}
 }
 
-int zero_goto_func(struct state * states, unsigned char token){
-	int next_state = states[0].edges[token].state_number;
+int zero_goto_func(unsigned char token){
+	int next_state = zero_state_edges[token].state_number;
 	if(next_state == -2){
 		return 0;
 	} else {
@@ -386,17 +373,124 @@ int zero_goto_func(struct state * states, unsigned char token){
 
 int goto_func(struct state * states, int state_number, unsigned char token){
 	if(state_number == 0){
-		return zero_goto_func(states, token);
+		return zero_goto_func(token);
 	} else {
 		return transit(states, state_number, token);
 	}
 }
-void enter_clamav_pattern(struct state * states, int * states_len, struct signature_fragment * sf){
+// // used to build the ac graph
+// int transit(struct state * states, int state_number, unsigned char token){
+// 	int next_state = states[state_number].edges[token].state_number;
+// 	if(state_number == -2){
+// 		return -1;
+// 	} else {
+// 		return next_state;
+// 	}
+// }
+
+// int zero_goto_func(struct state * states, unsigned char token){
+// 	int next_state = states[0].edges[token].state_number;
+// 	if(next_state == -2){
+// 		return 0;
+// 	} else {
+// 		return next_state;
+// 	}
+// }
+
+// int goto_func(struct state * states, int state_number, unsigned char token){
+// 	if(state_number == 0){
+// 		return zero_goto_func(states, token);
+// 	} else {
+// 		return transit(states, state_number, token);
+// 	}
+// }
+// void enter_clamav_sf(struct state * states, int * states_len, struct signature_fragment * sf){
+// 	int current_state = 0;
+// 	unsigned char * s = sf->s;
+// 	int j = 0;
+// 	while(j < sf->len){
+// 		int next_state = transit(states, current_state, s[j]);
+// 		if(next_state == -1){
+// 			// did not find edge for the current pattern, add edges
+// 			break;
+// 		} else {
+// 			j++;
+// 			current_state = next_state;
+// 		}
+// 	}
+
+// 	if(j == sf->len){
+// 		// add to the output list
+// 		push(&(states[current_state].output), sf);
+// 	} else {
+// 		// add edges for the following tokens
+// 		while(j < sf->len){
+// 			//states[current_state].edges[s[j]].state_number = *states_len;
+// 			struct edge * newedge = get_edge();
+// 			newedge->token = s[j];
+// 			newedge->state_number = *states_len;
+// 			push(&(states[current_state].edges), newedge);
+// 			current_state = *states_len;
+// 			(*states_len)++;
+// 			j++;
+// 		}
+// 		// append to the output list
+// 		push(&(states[current_state].output), sf);
+// 	}
+// }
+
+// void enter_snort_content(struct state * states, int * states_len, struct snort_content * content){
+// 	unsigned char * s = content->content;
+// 	int s_len = content->content_len;
+
+// 	int current_state = 0;
+// 	int j = 0;
+// 	while(j < content->content_len){
+// 		int next_state = transit(states, current_state, s[j]);
+// 		if(next_state == -1){
+// 			// did not find edge for the current pattern, add edges
+// 			break;
+// 		} else {
+// 			j++;
+// 			current_state = next_state;
+// 		}
+// 	}
+
+// 	if(j == content->content_len){
+// 		// add to the output list
+// 		push(&(states[current_state].output), content);
+// 	} else {
+// 		// add edges for the following tokens
+// 		while(j < content->content_len){
+// 			//states[current_state].edges[s[j]].state_number = *states_len;
+// 			struct edge * newedge = get_edge();
+// 			newedge->token = s[j];
+// 			newedge->state_number = *states_len;
+// 			push(&(states[current_state].edges), newedge);
+// 			current_state = *states_len;
+// 			(*states_len)++;
+// 			j++;
+// 		}
+// 		// append to the output list
+// 		push(&(states[current_state].output), content);
+// 	}
+// }
+
+void enter_pattern(int rule_type, struct state * states, int * states_len, void * pattern, int pattern_len){
 	int current_state = 0;
-	unsigned char * s = sf->s;
 	int j = 0;
-	while(j < sf->len){
-		int next_state = transit(states, current_state, s[j]);
+	while(j < pattern_len){
+		int next_state = -1;
+		if(rule_type == RULE_TYPE_STRING){
+			char * s = (char *) pattern;
+			next_state = transit(states, current_state, s[j]);
+		} else if (rule_type == RULE_TYPE_CLAMAV){
+			struct signature_fragment * sf = (struct signature_fragment *) pattern;
+			next_state = transit(states, current_state, sf->s[j]);
+		} else {
+			struct snort_content * content = (struct snort_content *) pattern;
+			next_state = transit(states, current_state, content->content[j]);
+		}
 		if(next_state == -1){
 			// did not find edge for the current pattern, add edges
 			break;
@@ -406,50 +500,33 @@ void enter_clamav_pattern(struct state * states, int * states_len, struct signat
 		}
 	}
 
-	if(j == sf->len){
+	if(j == pattern_len){
 		// add to the output list
-		push(&(states[current_state].output), sf);
+		push(&(states[current_state].output), pattern);
 	} else {
 		// add edges for the following tokens
-		while(j < sf->len){
-			states[current_state].edges[s[j]].state_number = *states_len;
+		while(j < pattern_len){
+			//states[current_state].edges[s[j]].state_number = *states_len;
+			struct edge * newedge = get_edge();
+			if(rule_type == RULE_TYPE_STRING){
+				char * s = (char *) pattern;
+				newedge->token = s[j];
+			} else if(rule_type == RULE_TYPE_CLAMAV){
+				struct signature_fragment * sf = (struct signature_fragment *) pattern;
+				newedge->token = sf->s[j];
+			} else {
+				struct snort_content * content = (struct snort_content *) pattern;
+				newedge->token = content->content[j];
+			}
+			
+			newedge->state_number = *states_len;
+			push(&(states[current_state].edges), newedge);
 			current_state = *states_len;
 			(*states_len)++;
 			j++;
 		}
 		// append to the output list
-		push(&(states[current_state].output), sf);
-	}
-}
-
-void enter_snort_content(struct state * states, int * states_len, struct snort_content * content){
-	int current_state = 0;
-	unsigned char * s = content->content;
-	int j = 0;
-	while(j < content->content_len){
-		int next_state = transit(states, current_state, s[j]);
-		if(next_state == -1){
-			// did not find edge for the current pattern, add edges
-			break;
-		} else {
-			j++;
-			current_state = next_state;
-		}
-	}
-
-	if(j == content->content_len){
-		// add to the output list
-		push(&(states[current_state].output), content);
-	} else {
-		// add edges for the following tokens
-		while(j < content->content_len){
-			states[current_state].edges[s[j]].state_number = *states_len;
-			current_state = *states_len;
-			(*states_len)++;
-			j++;
-		}
-		// append to the output list
-		push(&(states[current_state].output), content);
+		push(&(states[current_state].output), pattern);
 	}
 }
 
@@ -473,7 +550,11 @@ void enter_string_pattern(struct state * states, int * states_len, char * s, int
 	} else {
 		// add edges for the following tokens
 		while(j < s_len){
-			states[current_state].edges[s[j]].state_number = *states_len;
+			//states[current_state].edges[s[j]].state_number = *states_len;
+			struct edge * newedge = get_edge();
+			newedge->token = s[j];
+			newedge->state_number = *states_len;
+			push(&(states[current_state].edges), newedge);
 			current_state = *states_len;
 			(*states_len)++;
 			j++;
@@ -483,50 +564,66 @@ void enter_string_pattern(struct state * states, int * states_len, char * s, int
 	}
 }
 
-void build_ac_graph_from_clamav_rules(struct state * states, int * states_len, struct clamav_rule * rules, int rules_len){
+
+void build_ac_graph_from_clamav_rules(struct state * states, int * states_len, struct list_node * rules, int rules_len){
 	// states should be initialized
-	int i;
-	for(i = 0;i < rules_len;i++){
+	struct list_node * head = rules;
+	while(head){
+		struct clamav_rule * rule = (struct clamav_rule *) head->ptr;
+		head = head->next;
 		int j;
-		for(j = 0;j < rules[i].sfs_count;j++){
-			struct signature_fragment * sf = &(rules[i].sfs[j]);
-			enter_clamav_pattern(states, states_len, sf);
+		for(j = 0;j < rule->sfs_count;j++){
+			struct signature_fragment * sf = &(rule->sfs[j]);
+			enter_clamav_sf(states, states_len, sf);
 		}
 	}
 }
 
-void build_ac_graph_from_snort_rules(struct state * states, int * states_len, struct snort_rule * rules, int rules_len){
+void build_ac_graph_from_snort_rules(struct state * states, int * states_len, struct list_node * rules, int rules_len){
 	// states should be initialized
-	int i;
-	for(i = 0;i < rules_len;i++){
+	struct list_node * head = rules;
+	while(head){
+		struct snort_rule * rule = (struct snort_rule *) head->ptr;
+		head = head->ptr;
 		int j;
-		for(j = 0;j < rules[i].content_list_len;j++){
-			struct snort_content * content = &(rules[i].contents[j]);
+		for(j = 0;j < rule->content_list_len;j++){
+			struct snort_content * content = &(rule->contents[j]);
 			enter_snort_content(states, states_len, content);
 		}
 	}
 }
 
-void cal_failure_state(struct state * states){
-	struct state * queue[MAX_STATES];
+void cal_failure_state(struct state * states, int states_len){
+	struct state ** queue = (struct state **) malloc(states_len * sizeof(struct state *));
 	int head = 0;
 	int tail = 0;
 
 	int i;
-	for(i = 0;i < 256;i++){
-		int state_number = states[0].edges[i].state_number;
-		if(state_number != -2){
-			states[state_number].fail_state_number = 0;
-			queue[tail] = &(states[state_number]);
-			tail++;
-		}
+	struct list_node * n = states[0].edges;
+	while(n){
+		struct edge * e = (struct edge *) n->ptr;
+		n = n->next;
+		int state_number = e->state_number;
+		states[state_number].fail_state_number = 0;
+		queue[tail] = &(states[state_number]);
+		tail++;
 	}
+	// for(i = 0;i < 256;i++){
+	// 	int state_number = states[0].edges[i].state_number;
+	// 	if(state_number != -2){
+	// 		states[state_number].fail_state_number = 0;
+	// 		queue[tail] = &(states[state_number]);
+	// 		tail++;
+	// 	}
+	// }
 
 	while(head < tail){
 		struct state * current_state = queue[head];
 		head++;
-		for(i = 0;i < 256;i++){
-			struct edge * e = &(current_state->edges[i]);
+		struct list_node * n = current_state->edges;
+		while(n){
+			struct edge * e = (struct edge *) n->ptr;
+			n = n->next;
 			int state_number = e->state_number;
 			if(state_number != -2){
 				queue[tail] = &(states[state_number]);
@@ -551,6 +648,8 @@ void cal_failure_state(struct state * states){
 			}
 		}
 	}
+
+	free(queue);
 }
 
 int check_clamav_rule(struct clamav_rule * rule){
@@ -706,8 +805,18 @@ void read_type(FILE * fin, int * type, int * min, int * max){
 
 // for testing
 void print_type(int type, int min, int max){
-	
+	printf("%d\n", type);
+	if(type == RELATION_STAR){
+
+	} else if (type == RELATION_MIN || type == RELATION_EXACT){
+		printf("%d\n", min);
+	} else if (type == RELATION_MAX){
+		printf("%d\n", max);
+	} else {
+		printf("%d\n%d\n", min, max);
+	}
 }
+
 unsigned char * convert_hex_to_unsigned_char(char * s, struct signature_fragment * sf){
 	int len = strlen(s) - 1;
 	int k = 0;
@@ -719,12 +828,30 @@ unsigned char * convert_hex_to_unsigned_char(char * s, struct signature_fragment
 	}
 }
 
+void print_hex(unsigned char value){
+	unsigned int high = (value & 0xf0) >> 4;
+	unsigned int low = (value & 0x0f);
+	if(0 <= high && high <= 9){
+		printf("%d", high);
+	} else {
+		char c = 'a' + high - 10;
+		printf("%c", c);
+	}
+
+	if(0 <= low && low <= 9){
+		printf("%d", low);
+	} else {
+		char c = 'a' + low - 10;
+		printf("%c", c);
+	}
+}
+
 // for testing
-void print_clamav_rules(struct list_node ** rules, int total_number_of_rules){
+void print_clamav_rules(struct list_node * rules, int total_number_of_rules){
 	// print total number of rules
 	printf("%d\n", total_number_of_rules);
 
-	struct list_node * head = *rules;
+	struct list_node * head = rules;
 	while(head){
 		struct clamav_rule * rule = (struct clamav_rule *) head->ptr;
 		head = head->next;
@@ -737,10 +864,19 @@ void print_clamav_rules(struct list_node ** rules, int total_number_of_rules){
 
 		int i;
 		for(i = 0;i < rule->sfs_count;i++){
+			// print type, min and max
+			print_type(rule->sfs[i].type, rule->sfs[i].min, rule->sfs[i].max);
 
+			// print hex string
+			int j;
+			for(j = 0;j < rule->sfs[i].len;j++){
+				print_hex(rule->sfs[i].s[j]);
+			}
+			printf("\n");
 		}
 	}
 }
+
 int read_clamav_rules(char * filename, struct list_node ** rules, int number_of_rules){
 	FILE * fin = fopen(filename, "r");
 	// read total number of rules
@@ -923,13 +1059,83 @@ int read_snort_rules(char * filename, struct list_node ** rules, int number_of_r
 	return total_number_of_rules;
 }
 
+// for testing
+void print_state(struct state * s, int type){
+	printf("state number = %d\n", s->state_number);
+	printf("fail_state_number = %d\n", s->fail_state_number);
+	struct list_node * head = s->edges;
+	while(head){
+		struct edge * e = (struct edge *) head->ptr;
+		head = head->next;
+		printf("token = %c, state_number = %d\n", (char) e->token, e->state_number);
+	}
+
+	if(type == RULE_TYPE_STRING){
+		printf("output:\n");
+		head = s->output;
+		while(head){
+			printf("%s\n", (char *) head->ptr);
+			head = head->next;
+		}
+		printf("\n");
+	} else if(type == RULE_TYPE_CLAMAV){
+
+	} else {
+
+	}
+}
+
+void print_states(struct state * states, int states_len, int type){
+	int i;
+	for(i = 0;i < states_len;i++){
+		print_state(&(states[i]), type);
+	}
+}
+
 int main(){
 	initialize_mem_pool();
 	fprintf(stderr, "mem pool initialized\n");
 
-	// test read snort rules
-	struct list_node * snort_rules = NULL;
-	int total_number_of_rules = read_snort_rules("snort_rules.txt", &snort_rules, -1);
-	print_snort_rules(snort_rules, total_number_of_rules);
+	// // test read snort rules
+	// struct list_node * snort_rules = NULL;
+	// int total_number_of_rules = read_snort_rules("snort_rules.txt", &snort_rules, -1);
+	// print_snort_rules(snort_rules, total_number_of_rules);
+
+	// test read clamav rules
+	// struct list_node * clamav_rules = NULL;
+	// int total_number_of_rules = read_clamav_rules("rules_2000", &clamav_rules, -1);
+	// print_clamav_rules(clamav_rules, total_number_of_rules);
+
+	// test ac inspect string
+	char * he = "he";
+	char * she = "she";
+	char * his = "his";
+	char * hers = "hers";
+	struct state * states = initialize_states();
+	int states_len = 1;// zero state already exists
+	enter_pattern(RULE_TYPE_STRING, states, &states_len, he, strlen(he));
+	enter_pattern(RULE_TYPE_STRING, states, &states_len, she, strlen(she));
+	enter_pattern(RULE_TYPE_STRING, states, &states_len, his, strlen(his));
+	enter_pattern(RULE_TYPE_STRING, states, &states_len, hers, strlen(hers));
+	fprintf(stderr, "entered hers\n");
+
+	build_zero_state_edges(&(states[0]));
+	fprintf(stderr, "built zero state edges\n");
+
+	cal_failure_state(states, states_len);
+	print_states(states, states_len, RULE_TYPE_STRING);
+	char * hello = "hesheherhershishimit she is a good girl";
+	ac_inspect_string(states, hello, strlen(hello));
+
+	// // test clamav inspection
+	// struct state * states = initialize_states();
+	// int states_len = 1;
+	// struct list_node * clamav_rules = NULL;
+	// int total_number_of_rules = read_clamav_rules("rules_2000", &clamav_rules, -1);
+	// build_ac_graph_from_clamav_rules(states, &states_len, clamav_rules, total_number_of_rules);
+	// build_zero_state_edges(&(states[0]));
+	// cal_failure_state(states, states_len);
+	// print_states(states, states_len, RULE_TYPE_CLAMAV);
+
 	return 0;
 }
