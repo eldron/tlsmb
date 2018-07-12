@@ -574,7 +574,8 @@ void build_ac_graph_from_clamav_rules(struct state * states, int * states_len, s
 		int j;
 		for(j = 0;j < rule->sfs_count;j++){
 			struct signature_fragment * sf = &(rule->sfs[j]);
-			enter_clamav_sf(states, states_len, sf);
+			//enter_clamav_sf(states, states_len, sf);
+			enter_pattern(RULE_TYPE_CLAMAV, states, states_len, (void *) sf, sf->len);
 		}
 	}
 }
@@ -588,7 +589,8 @@ void build_ac_graph_from_snort_rules(struct state * states, int * states_len, st
 		int j;
 		for(j = 0;j < rule->content_list_len;j++){
 			struct snort_content * content = &(rule->contents[j]);
-			enter_snort_content(states, states_len, content);
+			//enter_snort_content(states, states_len, content);
+			enter_pattern(RULE_TYPE_SNORT, states, states_len, (void *) content, content->content_len);
 		}
 	}
 }
