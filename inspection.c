@@ -699,86 +699,113 @@ int check_clamav_rule(struct clamav_rule * rule){
 	return 1;
 }
 
+// void ac_inspect_string(struct state * states, unsigned char * s, int s_len){
+// 	int state_number = 0;
+// 	int i;
+// 	for(i = 0;i < s_len;i++){
+// 		while(goto_func(states, state_number, s[i]) == -1){
+// 			state_number = states[state_number].fail_state_number;
+// 		}
+// 		state_number = goto_func(states, state_number, s[i]);
+// 		if(states[state_number].output){
+// 			printf("matched patterns are:\n");
+// 			struct list_node * head = states[state_number].output;
+// 			while(head){
+// 				printf("%s\n", (char *) head->ptr);
+// 				head = head->next;
+// 			}
+// 		}
+// 	}
+// }
+
+
+
+void ac_inspect(int rule_type, struct state * states, int * global_state_number,
+	unsigned char token, int offset, struct list_node ** matched_rules){
+	
+	while(goto_func(states, *global_state_number, token) == -1){
+		*global_state_number = states[*global_state_number].fail_state_number;
+	}
+	*global_state_number = goto_func(states, *global_state_number, token);
+
+	if(states[*global_state_number].output){
+		// check if the corresponding rules are matched
+		struct list_node * head = states[*global_state_number].output;
+		while(head){
+			if(rule_type == RULE_TYPE_CLAMAV){
+				struct signature_fragment * sf = (struct signature_fragment *) head->ptr;
+				sf->hit = 1;
+				sf->offset = offset;
+				if(check_clamav_rule(sf->rule)){
+					if(sf->rule->hit){
+
+					} else {
+						sf->rule->hit = 1;
+						push(matched_rules, sf->rule);
+					}
+				}
+			} else if (rule_type == RULE_TYPE_SNORT){
+				struct snort_content * content = (struct snort_content *) head->ptr;
+				content->hit = 1;
+				content->offset = offset;
+				if(check_snort_rule(content->rule)){
+					if(content->rule->hit){
+
+					} else {
+						content->rule->hit = 1;
+						push(matched_rules, content->rule);
+					}
+				}
+			} else {
+				char * matched_pattern = (char *) head->ptr;
+				printf("matched: %s\n", matched_pattern);
+			}
+
+			head = head->next;
+		}
+
+		// reset global state number
+		*global_state_number = 0;
+	}
+}
+
 void ac_inspect_string(struct state * states, unsigned char * s, int s_len){
-	int state_number = 0;
-	int i;
+	int global_state_number = 0;
+	int i = 0;
 	for(i = 0;i < s_len;i++){
-		while(goto_func(states, state_number, s[i]) == -1){
-			state_number = states[state_number].fail_state_number;
-		}
-		state_number = goto_func(states, state_number, s[i]);
-		if(states[state_number].output){
-			printf("matched patterns are:\n");
-			struct list_node * head = states[state_number].output;
-			while(head){
-				printf("%s\n", (char *) head->ptr);
-				head = head->next;
-			}
-		}
+		ac_inspect(RULE_TYPE_STRING, states, &global_state_number, s[i], i, NULL);
 	}
 }
-
-void clamav_ac_inspect(struct state * states, int * global_state_number,
-	unsigned char token, int offset, struct list_node ** matched_rules){
+// void snort_ac_inspect(struct state * states, int * global_state_number,
+// 	unsigned char token, int offset, struct list_node ** matched_rules){
 	
-	while(goto_func(states, *global_state_number, token) == -1){
-		*global_state_number = states[*global_state_number].fail_state_number;
-	}
-	*global_state_number = goto_func(states, *global_state_number, token);
+// 	while(goto_func(states, *global_state_number, token) == -1){
+// 		*global_state_number = states[*global_state_number].fail_state_number;
+// 	}
+// 	*global_state_number = goto_func(states, *global_state_number, token);
 
-	if(states[*global_state_number].output){
-		// check if the corresponding rules are matched
-		struct list_node * head = states[*global_state_number].output;
-		while(head){
-			struct signature_fragment * sf = (struct signature_fragment *) head->ptr;
-			sf->hit = 1;
-			sf->offset = offset;
-			if(check_clamav_rule(sf->rule)){
-				if(sf->rule->hit){
+// 	if(states[*global_state_number].output){
+// 		// check if the corresponding rules are matched
+// 		struct list_node * head = states[*global_state_number].output;
+// 		while(head){
+// 			struct snort_content * content = (struct snort_content *) head->ptr;
+// 			content->hit = 1;
+// 			content->offset = offset;
+// 			if(check_snort_rule(content->rule)){
+// 				if(content->rule->hit){
 
-				} else {
-					sf->rule->hit = 1;
-					push(matched_rules, sf->rule);
-				}
-			}
-			head = head->next;
-		}
+// 				} else {
+// 					content->rule->hit = 1;
+// 					push(matched_rules, content->rule);
+// 				}
+// 			}
+// 			head = head->next;
+// 		}
 
-		// reset global state number
-		*global_state_number = 0;
-	}
-}
-
-void snort_ac_inspect(struct state * states, int * global_state_number,
-	unsigned char token, int offset, struct list_node ** matched_rules){
-	
-	while(goto_func(states, *global_state_number, token) == -1){
-		*global_state_number = states[*global_state_number].fail_state_number;
-	}
-	*global_state_number = goto_func(states, *global_state_number, token);
-
-	if(states[*global_state_number].output){
-		// check if the corresponding rules are matched
-		struct list_node * head = states[*global_state_number].output;
-		while(head){
-			struct snort_content * content = (struct snort_content *) head->ptr;
-			content->hit = 1;
-			content->offset = offset;
-			if(check_snort_rule(content->rule)){
-				if(content->rule->hit){
-
-				} else {
-					content->rule->hit = 1;
-					push(matched_rules, content->rule);
-				}
-			}
-			head = head->next;
-		}
-
-		// reset global state number
-		*global_state_number = 0;
-	}
-}
+// 		// reset global state number
+// 		*global_state_number = 0;
+// 	}
+// }
 
 void read_type(FILE * fin, int * type, int * min, int * max){
 	char c[10];
@@ -849,9 +876,9 @@ void print_hex(unsigned char value){
 }
 
 // for testing
-void print_clamav_rules(struct list_node * rules, int total_number_of_rules){
+void print_clamav_rules(struct list_node * rules){
 	// print total number of rules
-	printf("%d\n", total_number_of_rules);
+	//printf("%d\n", total_number_of_rules);
 
 	struct list_node * head = rules;
 	while(head){
@@ -1094,6 +1121,43 @@ void print_states(struct state * states, int states_len, int type){
 	}
 }
 
+struct rule_inspect{
+	struct state * states;
+	int states_len;
+	struct list_node * rules;
+	int number_of_rules;
+	int global_state_number;
+	struct list_node * matched_rules;
+};
+
+// number_of_rules should not be -1
+void initialize_rule_inspect(int rule_type, struct rule_inspect * ins, char * filename, int number_of_rules){
+	ins->states = initialize_states();
+	ins->states_len = 1;
+	ins->rules = NULL;
+	if(rule_type == RULE_TYPE_CLAMAV){
+		int total_number_of_rules = read_clamav_rules(filename, &(ins->rules), number_of_rules);
+	} else if(rule_type == RULE_TYPE_SNORT) {
+		int total_number_of_rules = read_snort_rules(filename, &(ins->rules), number_of_rules);
+	} else {
+		fprintf(stderr, "wrong rule type\n");
+	}
+
+	ins->number_of_rules = number_of_rules;
+	if(rule_type == RULE_TYPE_CLAMAV){
+		build_ac_graph_from_clamav_rules(ins->states, &(ins->states_len), 
+			ins->rules, ins->number_of_rules);
+	} else if(rule_type == RULE_TYPE_SNORT){
+		build_ac_graph_from_snort_rules(ins->states, &(ins->states_len), ins->rules, ins->number_of_rules);
+	} else {
+		fprintf(stderr, "wrong rule type\n");
+	}
+	build_zero_state_edges(&(ins->states[0]));
+	cal_failure_state(ins->states, ins->states_len);
+	ins->global_state_number = 0;
+	ins->matched_rules = NULL;
+}
+
 int main(){
 	initialize_mem_pool();
 	fprintf(stderr, "mem pool initialized\n");
@@ -1106,30 +1170,30 @@ int main(){
 	// test read clamav rules
 	// struct list_node * clamav_rules = NULL;
 	// int total_number_of_rules = read_clamav_rules("rules_2000", &clamav_rules, -1);
-	// print_clamav_rules(clamav_rules, total_number_of_rules);
+	// print_clamav_rules(clamav_rules);
 
 	// test ac inspect string
-	char * he = "he";
-	char * she = "she";
-	char * his = "his";
-	char * hers = "hers";
-	struct state * states = initialize_states();
-	int states_len = 1;// zero state already exists
-	enter_pattern(RULE_TYPE_STRING, states, &states_len, he, strlen(he));
-	enter_pattern(RULE_TYPE_STRING, states, &states_len, she, strlen(she));
-	enter_pattern(RULE_TYPE_STRING, states, &states_len, his, strlen(his));
-	enter_pattern(RULE_TYPE_STRING, states, &states_len, hers, strlen(hers));
-	fprintf(stderr, "entered hers\n");
+	// char * he = "he";
+	// char * she = "she";
+	// char * his = "his";
+	// char * hers = "hers";
+	// struct state * states = initialize_states();
+	// int states_len = 1;// zero state already exists
+	// enter_pattern(RULE_TYPE_STRING, states, &states_len, he, strlen(he));
+	// enter_pattern(RULE_TYPE_STRING, states, &states_len, she, strlen(she));
+	// enter_pattern(RULE_TYPE_STRING, states, &states_len, his, strlen(his));
+	// enter_pattern(RULE_TYPE_STRING, states, &states_len, hers, strlen(hers));
+	// fprintf(stderr, "entered hers\n");
 
-	build_zero_state_edges(&(states[0]));
-	fprintf(stderr, "built zero state edges\n");
+	// build_zero_state_edges(&(states[0]));
+	// fprintf(stderr, "built zero state edges\n");
 
-	cal_failure_state(states, states_len);
-	print_states(states, states_len, RULE_TYPE_STRING);
-	char * hello = "hesheherhershishimit she is a good girl";
-	ac_inspect_string(states, hello, strlen(hello));
+	// cal_failure_state(states, states_len);
+	// print_states(states, states_len, RULE_TYPE_STRING);
+	// char * hello = "hesheherhershishimit she is a good girl";
+	// ac_inspect_string(states, hello, strlen(hello));
 
-	// // test clamav inspection
+	// test clamav inspection
 	// struct state * states = initialize_states();
 	// int states_len = 1;
 	// struct list_node * clamav_rules = NULL;
@@ -1137,7 +1201,26 @@ int main(){
 	// build_ac_graph_from_clamav_rules(states, &states_len, clamav_rules, total_number_of_rules);
 	// build_zero_state_edges(&(states[0]));
 	// cal_failure_state(states, states_len);
-	// print_states(states, states_len, RULE_TYPE_CLAMAV);
+	// //print_states(states, states_len, RULE_TYPE_CLAMAV);
+	// int global_state_number = 0;
+	// struct list_node * matched_rules = NULL;struct rule_inspect snort_ins;
+	// initialize_rule_inspect(RULE_TYPE_SNORT, &snort_ins, "snort_rules.txt", 3368);
 
+	struct rule_inspect ins;
+	initialize_rule_inspect(RULE_TYPE_CLAMAV, &ins, "rules_2000", 2000);
+	FILE * fin = fopen("bigger.pcap", "r");
+	unsigned char token;
+	int offset = 0;
+	while((token = fgetc(fin)) != EOF){
+		ac_inspect(RULE_TYPE_CLAMAV, ins.states, &(ins.global_state_number), token, offset, &(ins.matched_rules));
+		printf("inspected %d\n", offset);
+		offset++;
+	}
+	print_clamav_rules(ins.matched_rules);
+
+	// test snort inspection
+	// struct rule_inspect snort_ins;
+	// initialize_rule_inspect(RULE_TYPE_SNORT, &snort_ins, "snort_rules.txt", 3368);
 	return 0;
 }
+
