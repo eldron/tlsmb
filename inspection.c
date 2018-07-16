@@ -172,6 +172,11 @@ void enqueue(struct list_node ** head, struct list_node ** tail, void * ptr){
 }
 
 struct state * initialize_states(){
+	if(mem_pool_idx + MAX_STATES * sizeof(struct state) >= mem_pool_max){
+		fprintf(stderr, "initialize_states: mem pool not enough\n");
+		return NULL;
+	}
+
 	struct state * states = (struct state *) &(mem_pool[mem_pool_idx]);
 	mem_pool_idx += MAX_STATES * sizeof(struct state);
 	int i;
@@ -187,6 +192,7 @@ struct state * initialize_states(){
 		states[i].output = NULL;
 	}
 
+	fprintf(stderr, "initialized states\n");
 	return states;
 }
 
@@ -585,7 +591,7 @@ void build_ac_graph_from_snort_rules(struct state * states, int * states_len, st
 	struct list_node * head = rules;
 	while(head){
 		struct snort_rule * rule = (struct snort_rule *) head->ptr;
-		head = head->ptr;
+		head = head->next;
 		int j;
 		for(j = 0;j < rule->content_list_len;j++){
 			struct snort_content * content = &(rule->contents[j]);
@@ -730,6 +736,7 @@ void ac_inspect(int rule_type, struct state * states, int * global_state_number,
 
 	if(states[*global_state_number].output){
 		// check if the corresponding rules are matched
+		//fprintf(stderr, "ac_inspect: output is not null\n");
 		struct list_node * head = states[*global_state_number].output;
 		while(head){
 			if(rule_type == RULE_TYPE_CLAMAV){
@@ -745,6 +752,7 @@ void ac_inspect(int rule_type, struct state * states, int * global_state_number,
 					}
 				}
 			} else if (rule_type == RULE_TYPE_SNORT){
+				//fprintf(stderr, "ac_inspect: rule type is snort\n");
 				struct snort_content * content = (struct snort_content *) head->ptr;
 				content->hit = 1;
 				content->offset = offset;
@@ -958,9 +966,9 @@ int read_clamav_rules(char * filename, struct list_node ** rules, int number_of_
 }
 
 // for testing
-void print_snort_rules(struct list_node * rules, int total_number_of_rules){
+void print_snort_rules(struct list_node * rules){
 	// print total number of rules
-	printf("%d\n", total_number_of_rules);
+	//printf("%d\n", total_number_of_rules);
 
 	struct list_node * head = rules;
 	while(head){
@@ -968,37 +976,37 @@ void print_snort_rules(struct list_node * rules, int total_number_of_rules){
 		head = head->next;
 
 		// print sid
-		printf("%d\n", rule->sid);
+		printf("sid = %d\n", rule->sid);
 
-		// print the number of contents
-		printf("%d\n", rule->content_list_len);
+		// // print the number of contents
+		// printf("%d\n", rule->content_list_len);
 
-		int i;
-		for(i = 0;i < rule->content_list_len;i++){
-			// print has_distance, distance, has_within and within
-			if(rule->contents[i].has_distance){
-				printf("1\n");
-				printf("%d\n", rule->contents[i].distance);
-			} else {
-				printf("0\n");
-			}
+		// int i;
+		// for(i = 0;i < rule->content_list_len;i++){
+		// 	// print has_distance, distance, has_within and within
+		// 	if(rule->contents[i].has_distance){
+		// 		printf("1\n");
+		// 		printf("%d\n", rule->contents[i].distance);
+		// 	} else {
+		// 		printf("0\n");
+		// 	}
 
-			if(rule->contents[i].has_within){
-				printf("1\n");
-				printf("%d\n", rule->contents[i].within);
-			} else {
-				printf("0\n");
-			}
+		// 	if(rule->contents[i].has_within){
+		// 		printf("1\n");
+		// 		printf("%d\n", rule->contents[i].within);
+		// 	} else {
+		// 		printf("0\n");
+		// 	}
 
-			// print content_len
-			printf("%d\n", rule->contents[i].content_len);
+		// 	// print content_len
+		// 	printf("%d\n", rule->contents[i].content_len);
 
-			// print content
-			int j = 0;
-			for(j = 0;j < rule->contents[i].content_len;j++){
-				printf("%d\n", rule->contents[i].content[j]);
-			}
-		}
+		// 	// print content
+		// 	int j = 0;
+		// 	for(j = 0;j < rule->contents[i].content_len;j++){
+		// 		printf("%d\n", rule->contents[i].content[j]);
+		// 	}
+		// }
 	}
 }
 
@@ -1081,6 +1089,8 @@ int read_snort_rules(char * filename, struct list_node ** rules, int number_of_r
 				fgets(s, LINELEN, fin);
 				rule->contents[j].content[k] = (unsigned char) atoi(s);
 			}
+
+			rule->contents[j].rule = rule;
 		}
 	}
 
@@ -1148,7 +1158,8 @@ void initialize_rule_inspect(int rule_type, struct rule_inspect * ins, char * fi
 		build_ac_graph_from_clamav_rules(ins->states, &(ins->states_len), 
 			ins->rules, ins->number_of_rules);
 	} else if(rule_type == RULE_TYPE_SNORT){
-		build_ac_graph_from_snort_rules(ins->states, &(ins->states_len), ins->rules, ins->number_of_rules);
+		build_ac_graph_from_snort_rules(ins->states, &(ins->states_len), 
+			ins->rules, ins->number_of_rules);
 	} else {
 		fprintf(stderr, "wrong rule type\n");
 	}
@@ -1206,21 +1217,39 @@ int main(){
 	// struct list_node * matched_rules = NULL;struct rule_inspect snort_ins;
 	// initialize_rule_inspect(RULE_TYPE_SNORT, &snort_ins, "snort_rules.txt", 3368);
 
-	struct rule_inspect ins;
-	initialize_rule_inspect(RULE_TYPE_CLAMAV, &ins, "rules_2000", 2000);
-	FILE * fin = fopen("bigger.pcap", "r");
-	unsigned char token;
-	int offset = 0;
-	while((token = fgetc(fin)) != EOF){
-		ac_inspect(RULE_TYPE_CLAMAV, ins.states, &(ins.global_state_number), token, offset, &(ins.matched_rules));
-		printf("inspected %d\n", offset);
-		offset++;
-	}
-	print_clamav_rules(ins.matched_rules);
+	// struct rule_inspect ins;
+	// initialize_rule_inspect(RULE_TYPE_CLAMAV, &ins, "rules_2000", 2000);
+	// FILE * fin = fopen("bigger.pcap", "r");
+	// unsigned char token;
+	// int offset = 0;
+	// int value;
+	// while((value = fgetc(fin)) != EOF){
+	// 	token = (unsigned char) value; 
+	// 	ac_inspect(RULE_TYPE_CLAMAV, ins.states, &(ins.global_state_number), token, offset, &(ins.matched_rules));
+	// 	// printf("inspected %d\n", offset);
+	// 	offset++;
+	// }
+	// print_clamav_rules(ins.matched_rules);
+	// fclose(fin);
 
 	// test snort inspection
-	// struct rule_inspect snort_ins;
-	// initialize_rule_inspect(RULE_TYPE_SNORT, &snort_ins, "snort_rules.txt", 3368);
+	struct rule_inspect snort_ins;
+	int offset = 0;
+	initialize_rule_inspect(RULE_TYPE_SNORT, &snort_ins, "snort_rules.txt", 3368);
+	fprintf(stderr, "initialized snort rules\n");
+	FILE * fin = fopen("bigger.pcap", "r");
+	int value;
+	unsigned char token;
+	while((value = fgetc(fin)) != EOF){
+		token = (unsigned char) value;
+		//fprintf(stderr, "inspecting %d\n", offset);
+		ac_inspect(RULE_TYPE_SNORT, snort_ins.states, &(snort_ins.global_state_number), token, offset, &(snort_ins.matched_rules));
+		//printf("inspected %d\n", offset);
+		offset++;
+	}
+	print_snort_rules(snort_ins.matched_rules);
+	fclose(fin);
+
 	return 0;
 }
 
