@@ -1218,11 +1218,19 @@ int main(int argc, char ** args){
 	// we use stdio to read the socket
 	FILE * fin = fdopen(client_sock, "r");
 	unsigned char data_len;
+	int offset = 0;
+	unsigned char token;
+	int i;
 	while(1){
 		// read data_len
 		data_len = fgetc(fin);
 		if(data_len){
 			// read data, perform inspection, send back result
+			for(i = 0;i < data_len;i++){
+				token = (unsigned char) fgetc(fin);
+				ac_inspect(rule_type, ins.states, &(ins.global_state_number), token, offset, &(ins.matched_rules));
+			}
+			
 		} else {
 			break;
 		}
