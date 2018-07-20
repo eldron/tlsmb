@@ -1191,6 +1191,8 @@ int main(int argc, char ** args){
 	if((server_sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0){
 		perror("create unix server socket failed");
 		exit(1);
+	} else {
+		fprintf(stderr, "created server socket\n");
 	}
 
 	struct sockaddr_un server_address;
@@ -1201,11 +1203,15 @@ int main(int argc, char ** args){
 	if(bind(server_sock, &server_address, server_address_len) < 0){
 		perror("bind unix server socket failed");
 		exit(1);
+	} else {
+		fprintf(stderr, "bind server socket\n");
 	}
 
 	if(listen(server_sock, 5) < 0){
 		perror("listen failed");
 		exit(1);
+	} else {
+		fprintf(stderr, "server socket listening\n");
 	}
 
 	int client_sock;
@@ -1214,23 +1220,38 @@ int main(int argc, char ** args){
 	if((client_sock = accept(server_sock, &client_address, &client_address_len)) < 0){
 		perror("accept failed");
 		exit(1);
+	} else {
+		fprintf(stderr, "accepted client socket\n");
 	}
 	// we use stdio to read the socket
 	FILE * fin = fdopen(client_sock, "r");
-	unsigned char data_len;
+	int data_len;
 	int offset = 0;
 	unsigned char token;
 	int i;
+	unsigned char matched_reply[1];
+	matched_reply[0] = 1;
+	unsigned char no_match_reply[1];
+	no_match_reply[0] = 0;
+
 	while(1){
 		// read data_len
-		data_len = fgetc(fin);
-		if(data_len){
+		int high = fgetc(fin);
+		int low = fgetc(fin);
+		data_len = (high << 8) | low;
+		// fprintf(stderr, "data_len = %d\n", data_len);
+		if(data_len > 0){
 			// read data, perform inspection, send back result
 			for(i = 0;i < data_len;i++){
 				token = (unsigned char) fgetc(fin);
 				ac_inspect(rule_type, ins.states, &(ins.global_state_number), token, offset, &(ins.matched_rules));
 			}
 			
+			if(ins.matched_rules){
+				send(client_sock, matched_reply, 1, 0);
+			} else {
+				send(client_sock, no_match_reply, 1, 0);
+			}
 		} else {
 			break;
 		}

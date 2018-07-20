@@ -1,0 +1,7 @@
+experiment environment:
+
+sudo apt-get install python-pip
+pip install six
+pip install ecdsa
+git clone tlslite-ng
+sudo python setup.py install
