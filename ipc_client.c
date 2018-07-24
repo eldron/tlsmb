@@ -31,7 +31,7 @@ void test_inspection(){
     int number_read;
     unsigned char result;
     while(1){
-        number_read = fread(buffer, 1, 2048, fin);
+        number_read = fread(buffer + 2, 1, 2048, fin);
         if(number_read < 2048){
             if(number_read > 0){
                 // send to server for inspection

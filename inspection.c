@@ -1234,19 +1234,24 @@ int main(int argc, char ** args){
 	unsigned char no_match_reply[1];
 	no_match_reply[0] = 0;
 
+	unsigned char buffer[20000];
 	while(1){
 		// read data_len
 		int high = fgetc(fin);
 		int low = fgetc(fin);
 		data_len = (high << 8) | low;
-		// fprintf(stderr, "data_len = %d\n", data_len);
+		fprintf(stderr, "data_len = %d\n", data_len);
 		if(data_len > 0){
 			// read data, perform inspection, send back result
-			for(i = 0;i < data_len;i++){
-				token = (unsigned char) fgetc(fin);
+			// for(i = 0;i < data_len;i++){
+			// 	token = (unsigned char) fgetc(fin);
+			// 	ac_inspect(rule_type, ins.states, &(ins.global_state_number), token, offset, &(ins.matched_rules));
+			// }
+			int len = fread(buffer, 1, data_len, fin);
+			for(i = 0;i < len;i++){
 				ac_inspect(rule_type, ins.states, &(ins.global_state_number), token, offset, &(ins.matched_rules));
+				offset++;
 			}
-			
 			if(ins.matched_rules){
 				send(client_sock, matched_reply, 1, 0);
 			} else {
