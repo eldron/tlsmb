@@ -631,6 +631,11 @@ class MBHandshakeState(object):
         self.to_server_list = []
         self.to_client_list = []
 
+        # ipc socket
+        self.inspection_client_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.inspection_client_sock.connect('inspection_server')
+
+
     def clear_tosend_list(self, toserver):
         if toserver:
             for tosend in self.to_server_list:
@@ -2621,6 +2626,20 @@ class MBHandshakeState(object):
             self.client_sock.close()
             self.server_sock.close()
 
+    def inspection_data(self, data):
+        # data is of type byte array
+        data_len = len(data)
+        if 0 < data_len and data_len <= 0xffff:
+            high = data_len & 0xff00
+            low = data_len & 0x00ff
+            tosend = bytearray()
+            tosend.append(high)
+            tosend.append(low)
+            tosend = tosend + data
+            self.inspection_client_sock.sendall(tosend)
+            # read reply
+            reply = self.inspection_client_sock.recv(1)
+            
     def simple_forward_data(self):
         # now we should be able to read decrypted data from client_connection and server_connection
         # new session ticket is handled in our read function

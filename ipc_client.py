@@ -7,7 +7,10 @@ if __name__ == '__main__':
     client_sock.connect(server_address)
     # read file, send data to server for inspection, read results
     fin = open('bigger.pcap', 'r')
-    data = fin.read()
+    data = bytearray(fin.read())
+    data_len = len(data)
+    high = data_len & 0xff00
+    low = data_len & 0x00ff
 
 # if __name__ == '__main__':
 #     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
