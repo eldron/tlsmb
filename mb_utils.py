@@ -2595,7 +2595,7 @@ class MBHandshakeState(object):
                 print 'retry server hello is'
                 print self.retry_server_hello
             self.middleman_common()
-            self.simple_forward_data()
+            self.simple_forward_data(False)
         else:
             # we store the public key files, then tare down the connections
             self.state = MB_STATE_INITIAL_WAIT_CLIENT_HELLO
@@ -2640,7 +2640,7 @@ class MBHandshakeState(object):
             # read reply
             reply = self.inspection_client_sock.recv(1)
             
-    def simple_forward_data(self):
+    def simple_forward_data(self, perform_inspection):
         # now we should be able to read decrypted data from client_connection and server_connection
         # new session ticket is handled in our read function
         print 'simple_forward_data called'
@@ -2665,6 +2665,9 @@ class MBHandshakeState(object):
                     elif isinstance(result, ApplicationData):
                         print 'middleman: received application data from client'
                         print parser.bytes
+                        if perform_inspection:
+                            self.inspection_data(parser.bytes)
+
                     elif isinstance(result, Alert):
                         print 'received Alert from client'
                         # TODO on connection close, we should store session to disk for session resumption
@@ -2689,6 +2692,9 @@ class MBHandshakeState(object):
                     elif isinstance(result, ApplicationData):
                         print 'middleman: received application data from server'
                         print parser.bytes
+                        if perform_inspection:
+                            self.inspection_data(parser.bytes)
+
                     elif isinstance(result, Alert):
                         print 'middleman: recevied alert from server'
                         # TODO on connection close, we should store session to disk for resumption
@@ -2723,7 +2729,7 @@ class MBHandshakeState(object):
         
         # now ec private key is calculated
         self.middleman_common()
-        self.simple_forward_data()
+        self.simple_forward_data(True)
 
     def naive_middleman(self):
         """
@@ -2748,7 +2754,7 @@ class MBHandshakeState(object):
 
         # now ec private key is calculated
         self.middleman_common()
-        self.simple_forward_data()
+        self.simple_forward_data(False)
 
 def mb_get_settings(client_hello, sever_hello):
     """
