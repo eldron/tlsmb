@@ -8,6 +8,7 @@ if __name__ == '__main__':
     if len(sys.argv) != 5:
         print 'usage: ' + sys.argv[0] + ' proxy_ip proxy_port server_ip server_port'
     else:
+        file_size = 9637200
         proxy_ip = sys.argv[1]
         proxy_port = int(sys.argv[2])
         server_ip = sys.argv[3]
@@ -54,6 +55,9 @@ if __name__ == '__main__':
                 r = sock.recv(block_size)
                 if len(r) > 0:
                     count += len(r)
+                    if count >= file_size:
+                        print 'received ' + str(count) + 'bytes data, exiting'
+                        break
                 else:
                     print 'received ' + str(count) + ' bytes data, receive file completed'
                     break

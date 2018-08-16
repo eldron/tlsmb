@@ -50,6 +50,8 @@ def forward_data(request, sock, perform_inspection):
 	sel = selectors.DefaultSelector()
 	sel.register(request, selectors.EVENT_READ)
 	sel.register(sock, selectors.EVENT_READ)
+	server_data_count = 0
+	client_data_count = 0
 	while True:
 		events = sel.select()
 		for key, mask in events:
@@ -58,12 +60,14 @@ def forward_data(request, sock, perform_inspection):
 				if perform_inspection:
 					data_len = len(data)
 					if 0 < data_len and data_len <= 0xffff:
+						server_data_count += data_len
+						#print 'server_data_count = ' + str(server_data_count)
 						high = (data_len & 0xff00) >> 8
 						low = data_len & 0x00ff
 						tosend = bytearray()
 						tosend.append(high)
 						tosend.append(low)
-						tosemd = tosend + data
+						tosend = tosend + data
 						inspection_client_sock.sendall(tosend)
 						reply = inspection_client_sock.recv(1)
 				request.sendall(data)
