@@ -1,9 +1,6 @@
 import socket
-from tlslite import TLSConnection
-from tlslite.api import *
 import sys
 import ipaddress
-import mb_utils
 
 # the naive version
 
@@ -49,23 +46,14 @@ if __name__ == '__main__':
             print 'received failed reply'
         else:
             print 'received succeeded reply, socks 5 proxy established connection with the remote server'
-            # now use sock to establish TLS 1.3 connection with the remote server
-            connection = TLSConnection(sock)
-            mb_utils.fake_handshakeClientCert(connection)
-            # 2 \r\n
-            connection.send("GET /bigger.pcap HTTP/1.0\r\n\r\n")
+            # now use sock to download file from HTTP server
+            sock.sendall("GET /bigger.pcap HTTP/1.0\r\n\r\n")
             count = 0
             block_size = 1024 * 1024
             while True:
-                r = connection.recv(block_size)
-                if r in (0, 1):
-                    print 'received 0 or 1'
-                elif isinstance(r, str):
-                    if len(r) > 0:
-                        count = count + len(r)
-                    else:
-                        print 'received ' + str(count) + 'bytes data, receive file completed'
-                        break
+                r = sock.recv(block_size)
+                if len(r) > 0:
+                    count += len(r)
                 else:
-                    print 'fuck'
-            #connection.close()
+                    print 'received ' + str(count) + ' bytes data, receive file completed'
+                    break

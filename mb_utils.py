@@ -895,10 +895,10 @@ class MBHandshakeState(object):
                      header.type == ContentType.change_cipher_spec):
                 #yield (header, parser)
                 
-                if from_server:
-                    print 'getNextRecord: received change cipher spec from server'
-                else:
-                    print 'getNextRecord: received change cipher spec from client'
+                # if from_server:
+                #     print 'getNextRecord: received change cipher spec from server'
+                # else:
+                #     print 'getNextRecord: received change cipher spec from client'
                 yield (header, parser)
             # If it's an SSLv2 ClientHello, we can return it as well, since
             # it's the only ssl2 type we support
@@ -1590,12 +1590,12 @@ class MBHandshakeState(object):
             elif recordHeader.type == ContentType.alert:
                 yield (Alert().parse(p), p)
             elif recordHeader.type == ContentType.application_data:
-                if from_server:
-                    print 'getMsg: received application data from server_connection:'
-                    print p.bytes
-                else:
-                    print 'getMsg: received application data from client_connection:'
-                    print p.bytes
+                # if from_server:
+                #     print 'getMsg: received application data from server_connection:'
+                #     print p.bytes
+                # else:
+                #     print 'getMsg: received application data from client_connection:'
+                #     print p.bytes
                 yield (ApplicationData().parse(p), p)
             elif recordHeader.type == ContentType.handshake:
                 #Convert secondaryType to tuple, if it isn't already
@@ -2630,7 +2630,7 @@ class MBHandshakeState(object):
         # data is of type byte array
         data_len = len(data)
         if 0 < data_len and data_len <= 0xffff:
-            high = data_len & 0xff00
+            high = (data_len & 0xff00) >> 8
             low = data_len & 0x00ff
             tosend = bytearray()
             tosend.append(high)
@@ -2663,8 +2663,8 @@ class MBHandshakeState(object):
                     if isinstance(result, ChangeCipherSpec):
                         print 'middleman: received change cipher spec from client'
                     elif isinstance(result, ApplicationData):
-                        print 'middleman: received application data from client'
-                        print parser.bytes
+                        #print 'middleman: received application data from client'
+                        #print parser.bytes
                         if perform_inspection:
                             self.inspection_data(parser.bytes)
 
@@ -2690,8 +2690,8 @@ class MBHandshakeState(object):
                     elif isinstance(result, NewSessionTicket):
                         print 'middleman: received new session ticket from server'
                     elif isinstance(result, ApplicationData):
-                        print 'middleman: received application data from server'
-                        print parser.bytes
+                        #print 'middleman: received application data from server'
+                        #print parser.bytes
                         if perform_inspection:
                             self.inspection_data(parser.bytes)
 

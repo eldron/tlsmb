@@ -3,5 +3,18 @@ experiment environment:
 sudo apt-get install python-pip
 pip install six
 pip install ecdsa
+pip install selectors2
 git clone tlslite-ng
 sudo python setup.py install
+
+
+Run experiments:
+1.  cd into test_server
+    tls.py server -c serverX509Cert.pem -k serverX509Key.pem 127.0.0.1:4443
+2.  start inspection server
+    ./inspection rule_type rule_file number_of_rules
+    e.g. ./inspection 0 rules_2000 2000
+3.  start middlebox
+    python mb.py 10000
+4.  run tls_client.py
+    
