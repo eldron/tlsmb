@@ -4,9 +4,32 @@ import ipaddress
 
 # the naive version
 
+def direct_download_file(server_ip, server_port):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.connect((server_ip, server_port))
+    sock.sendall("GET /bigger.pcap HTTP/1.0\r\n\r\n")
+    count = 0
+    file_size = 9637200
+    block_size = 1024 * 1024
+    while True:
+        r = sock.recv(block_size)
+        if len(r) > 0:
+            count += len(r)
+            if count >= file_size:
+                print 'received ' + str(count) + 'bytes data, exiting'
+                break
+        else:
+            print 'received ' + str(count) + ' bytes data, receive file completed'
+            break
+
 if __name__ == '__main__':
-    if len(sys.argv) != 5:
+    if len(sys.argv) != 5 and len(sys.argv) != 3:
         print 'usage: ' + sys.argv[0] + ' proxy_ip proxy_port server_ip server_port'
+        print 'usage: ' + sys.argv[0] + ' server_ip server_port'
+    elif len(sys.argv) == 3:
+        server_ip = sys.argv[1]
+        server_port = int(sys.argv[2])
+        direct_download_file(server_ip, server_port)
     else:
         file_size = 9637200
         proxy_ip = sys.argv[1]

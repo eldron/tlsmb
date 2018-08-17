@@ -2729,7 +2729,7 @@ class MBHandshakeState(object):
         
         # now ec private key is calculated
         self.middleman_common()
-        self.simple_forward_data(True)
+        self.simple_forward_data(False)
 
     def naive_middleman(self):
         """

@@ -43,8 +43,10 @@ def parse_method_selection_msg(msg):
 # request is connected to client
 # sock is connected with server
 def forward_data(request, sock, perform_inspection):
-	inspection_client_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-	inspection_client_sock.connect('inspection_server')
+	if perform_inspection:
+		inspection_client_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+		inspection_client_sock.connect('inspection_server')
+
 	request.setblocking(False)
 	sock.setblocking(False)
 	sel = selectors.DefaultSelector()
@@ -159,7 +161,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					self.request.setblocking(False)
 					sock.setblocking(False)
 					# forward and inspect data
-					forward_data(self.request, sock, True)
+					forward_data(self.request, sock, False)
 				else:
 					# send failed reply
 					failed_reply = b''
@@ -208,7 +210,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					self.request.setblocking(False)
 					sock.setblocking(False)
 					# forward and inspect data
-					forward_data(self.request, sock, True)
+					forward_data(self.request, sock, False)
 				else:
 					# send failed reply
 					failed_reply = b''
@@ -277,8 +279,9 @@ if __name__ == '__main__':
 	else:
 		port = int(sys.argv[1])
 		server = ThreadedTCPServer(('localhost', port), ThreadedTCPRequestHandler)
-		server_thread = threading.Thread(target = server.serve_forever)
-		server_thread.daemon = True
-		server_thread.start()
-		while True:
-				pass
+		server.serve_forever()
+		# server_thread = threading.Thread(target = server.serve_forever)
+		# server_thread.daemon = True
+		# server_thread.start()
+		# while True:
+		# 		pass

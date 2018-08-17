@@ -18,3 +18,23 @@ Run experiments:
     python mb.py 10000
 4.  run tls_client.py
     
+
+no encryption, http server:
+1.  cd into test_server
+    python -m SimpleHTTPServer 20000
+2.  start inspection server
+3.  start middlebox
+    python simple_mb.py 10000
+4.  run http_client.py (direct download or through middlebox)
+
+tls encryption, no middlebox:
+1.  cd into test_server
+    tls.py server -c serverX509Cert.pem -k serverX509Key.pem 127.0.0.1:4443
+2.  time python test_client.py
+
+tls encryption, download file through middlebox:
+1.  cd into test_server
+    tls.py server -c serverX509Cert.pem -k serverX509Key.pem 127.0.0.1:4443
+2.  start inspection server
+3.  start middlebox
+    
