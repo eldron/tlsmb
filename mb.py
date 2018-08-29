@@ -39,21 +39,21 @@ def parse_method_selection_msg(msg):
 		print_auth_method(ord(msg[i + 2]))
 		i = i + 1
 
-def forward_data(request, sock):
-	request.setblocking(False)
-	sock.setblocking(False)
-	sel = selectors.DefaultSelector()
-	sel.register(request, selectors.EVENT_READ)
-	sel.register(sock, selectors.EVENT_READ)
-	while True:
-		events = sel.select()
-		for key, mask in events:
-			if key.fileobj == sock:
-				data = sock.recv(2048)
-				request.sendall(data)
-			else:
-				data = request.recv(2048)
-				sock.sendall(data)
+# def forward_data(request, sock):
+# 	request.setblocking(False)
+# 	sock.setblocking(False)
+# 	sel = selectors.DefaultSelector()
+# 	sel.register(request, selectors.EVENT_READ)
+# 	sel.register(sock, selectors.EVENT_READ)
+# 	while True:
+# 		events = sel.select()
+# 		for key, mask in events:
+# 			if key.fileobj == sock:
+# 				data = sock.recv(2048)
+# 				request.sendall(data)
+# 			else:
+# 				data = request.recv(2048)
+# 				sock.sendall(data)
 
 class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 	def handle(self):
@@ -127,8 +127,8 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					self.request.sendall(succeeded_reply)
 					# forward data
 					#forward_data(self.request, sock)
-					self.request.setblocking(False)
-					sock.setblocking(False)
+					self.request.setblocking(0)
+					sock.setblocking(0)
 					mb_handshake_state = MBHandshakeState()
 					mb_handshake_state.set_server_sock(sock)
 					mb_handshake_state.set_client_sock(self.request)
@@ -181,13 +181,16 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					self.request.sendall(succeeded_reply)
 					# forward data
 					#forward_data(self.request, sock)
-					self.request.setblocking(False)
-					sock.setblocking(False)
+					self.request.setblocking(0)
+					sock.setblocking(0)
 					mb_handshake_state = MBHandshakeState()
 					mb_handshake_state.set_server_sock(sock)
 					mb_handshake_state.set_client_sock(self.request)
 					#mb_handshake_state.asymmetric_middleman()
-					mb_handshake_state.stateless_middleman()
+					try:
+						mb_handshake_state.stateless_middleman()
+					except:
+						print 'clear tosend list interval is ' + str(mb_handshake_state.clear_tosend_list_interval) + 'seconds'
 				else:
 					# send failed reply
 					failed_reply = b''

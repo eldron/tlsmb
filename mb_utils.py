@@ -6,8 +6,9 @@ from tlslite import TLSConnection
 from tlslite.session import *
 from tlslite.tlsconnection import is_valid_hostname
 from tlslite.handshakehelpers import *
-import selectors2 as selectors
+import select
 import os.path
+import time
 
 from mb_ec_util import *
 
@@ -635,8 +636,12 @@ class MBHandshakeState(object):
         self.inspection_client_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.inspection_client_sock.connect('inspection_server')
 
+        self.clear_tosend_list_interval = 0
+        self.app_data_len = 0
+
 
     def clear_tosend_list(self, toserver):
+        begin = time.time()
         if toserver:
             for tosend in self.to_server_list:
                 header, data = tosend
@@ -647,6 +652,9 @@ class MBHandshakeState(object):
                 header, data = tosend
                 self.client_sock.sendall(header.write() + data)
             self.to_client_list = []
+        end = time.time()
+        interval = 1000 * end - 1000 * begin
+        self.clear_tosend_list_interval += interval
     
     def set_server_sock(self, sock):
         """
@@ -720,18 +728,18 @@ class MBHandshakeState(object):
 
         (header, data) = result
 
-        # # we send the ciphertext to the other party
-        # if from_server:
-        #     self.client_sock.sendall(header.write() + data)
-        # else:
-        #     self.server_sock.sendall(header.write() + data)
+        # we send the ciphertext to the other party
+        if from_server:
+            self.client_sock.sendall(header.write() + data)
+        else:
+            self.server_sock.sendall(header.write() + data)
 
         # cache the cipher text data to send
         # send the data when inspection is done
-        if from_server:
-            self.to_client_list.append((header, data))
-        else:
-            self.to_server_list.append((header, data))
+        # if from_server:
+        #     self.to_client_list.append((header, data))
+        # else:
+        #     self.to_server_list.append((header, data))
 
         if isinstance(header, RecordHeader2):
             data = record_layer._decryptSSL2(data, header.padding)
@@ -2628,7 +2636,12 @@ class MBHandshakeState(object):
 
     def inspection_data(self, data):
         # data is of type byte array
+        #print 'inspection_data is called'
         data_len = len(data)
+        self.app_data_len += data_len
+        if self.app_data_len >= 9637000:
+            print 'clean tosend list interval is: ' + str(self.clear_tosend_list_interval)
+
         if 0 < data_len and data_len <= 0xffff:
             high = (data_len & 0xff00) >> 8
             low = data_len & 0x00ff
@@ -2639,7 +2652,65 @@ class MBHandshakeState(object):
             self.inspection_client_sock.sendall(tosend)
             # read reply
             reply = self.inspection_client_sock.recv(1)
-            
+
+    def select_forward_data(self, perform_inspection):
+        # now we should be able to read decrypted data from client_connection and server_connection
+        # new session ticket is handled in our read function
+        print 'simple_forward_data called'
+
+        allowedTypes = (ContentType.application_data, ContentType.handshake, ContentType.alert, ContentType.change_cipher_spec)
+        allowedHsTypes = HandshakeType.new_session_ticket
+        inputs = [self.client_sock, self.server_sock]
+
+        while inputs:
+            if self.client_connection.closed:
+                print 'middleman: client_connection is closed'
+                break
+            if self.server_connection.closed:
+                print 'middleman: server_connection is closed'
+                break
+
+            readable, writable, exceptional = select.select(inputs, [], inputs)
+            for s in readable:
+                for result in self._getMsg(s == self.server_sock, allowedTypes, allowedHsTypes):
+                    if result in (0, 1):
+                        break
+                    else:
+                        result, parser = result
+                        if isinstance(result, ChangeCipherSpec):
+                            if s == self.client_sock:
+                                print 'middleman: received change cipher spec from client'
+                            else:
+                                print 'middleman: received ccs from server'
+                        elif isinstance(result, ApplicationData):
+                            #print 'middleman: received application data from client'
+                            #print parser.bytes
+                            if perform_inspection:
+                                self.inspection_data(parser.bytes)
+
+                        elif isinstance(result, Alert):
+                            if s == self.client_sock:
+                                print 'received Alert from client'
+                            else:
+                                print 'received alert from server'
+                            self.client_sock.close()
+                            self.server_sock.close()
+                            inputs = []
+                            # TODO on connection close, we should store session to disk for session resumption
+                        else:
+                            if s == self.client_sock:
+                                print 'middleman: received unexpected record from client'
+                            else:
+                                print 'middleman: received unexpected record from server'
+                        # send cached data to server or server
+                        self.clear_tosend_list(s == self.client_sock)
+                        break
+            if len(exceptional) > 0:
+                self.client_sock.close()
+                self.server_sock.close()
+                print 'exception happened, exiting..'
+                break
+
     def simple_forward_data(self, perform_inspection):
         # now we should be able to read decrypted data from client_connection and server_connection
         # new session ticket is handled in our read function
@@ -2729,7 +2800,7 @@ class MBHandshakeState(object):
         
         # now ec private key is calculated
         self.middleman_common()
-        self.simple_forward_data(False)
+        self.select_forward_data(False)
 
     def naive_middleman(self):
         """

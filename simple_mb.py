@@ -5,7 +5,8 @@ import SocketServer as socketserver
 import threading
 import socket
 import ipaddress
-import selectors2 as selectors
+#import selectors2 as selectors
+import select
 from mb_utils import *
 
 udp_bind_port = 10000
@@ -40,6 +41,44 @@ def parse_method_selection_msg(msg):
 		i = i + 1
 
 
+def simple_forward_data(request, sock):
+	request.setblocking(0)
+	sock.setblocking(0)
+	inputs = [request, sock]
+	while inputs:
+		readable, writable, exceptional = select.select(inputs, [], inputs)
+		for s in readable:
+			data = s.recv(2048)
+			if data:
+				if s == request:
+					sock.sendall(data)
+				else:
+					request.sendall(data)
+			else:
+				s.close()
+				inputs.remove(s)
+		for s in exceptional:
+			s.close()
+			inputs.remove(s)
+
+# def simple_forward_data(request, sock):
+# 	request.setblocking(False)
+# 	sock.setblocking(False)
+# 	request_list = []
+# 	request_list_len = 0
+# 	while True:
+# 		data = request.recv(2048)
+# 		sock.sendall(data)
+
+# 		data = sock.recv(2048)
+# 		if len(data) > 0:
+# 			request_list.append(data)
+# 			request_list_len += len(data)
+# 			if request_list_len >= 16384:
+# 				for item in request_list:
+# 					request.sendall(item)
+# 				request_list_len = 0
+
 # request is connected to client
 # sock is connected with server
 def forward_data(request, sock, perform_inspection):
@@ -54,11 +93,17 @@ def forward_data(request, sock, perform_inspection):
 	sel.register(sock, selectors.EVENT_READ)
 	server_data_count = 0
 	client_data_count = 0
+	request_list = []
+	request_list_len = 0
+	sock_list = []
+	sock_list_len = 0
 	while True:
 		events = sel.select()
 		for key, mask in events:
 			if key.fileobj == sock:
 				data = sock.recv(2048)
+				request_list.append(data)
+				request_list_len += len(data)
 				if perform_inspection:
 					data_len = len(data)
 					if 0 < data_len and data_len <= 0xffff:
@@ -72,21 +117,37 @@ def forward_data(request, sock, perform_inspection):
 						tosend = tosend + data
 						inspection_client_sock.sendall(tosend)
 						reply = inspection_client_sock.recv(1)
-				request.sendall(data)
+				#request.sendall(data)
+				print 'request_list_len = ' + str(request_list_len)
+				if request_list_len >= 16384:
+					for item in request_list:
+						request.sendall(item)
+					request_list = []
+					request_list_len = 0
+					print 'sent bulk data'
 			else:
 				data = request.recv(2048)
-				if perform_inspection:
-					data_len = len(data)
-					if 0 < data_len and data_len <= 0xffff:
-						high = (data_len & 0xff00) >> 8
-						low = data_len & 0x00ff
-						tosend = bytearray()
-						tosend.append(high)
-						tosend.append(low)
-						tosend = tosend + data
-						inspection_client_sock.sendall(tosend)
-						reply = inspection_client_sock.recv(1)
+				# sock_list.append(data)
+				# sock_list_len += len(data)
+				# if perform_inspection:
+				# 	data_len = len(data)
+				# 	if 0 < data_len and data_len <= 0xffff:
+				# 		high = (data_len & 0xff00) >> 8
+				# 		low = data_len & 0x00ff
+				# 		tosend = bytearray()
+				# 		tosend.append(high)
+				# 		tosend.append(low)
+				# 		tosend = tosend + data
+				# 		inspection_client_sock.sendall(tosend)
+				# 		reply = inspection_client_sock.recv(1)
 				sock.sendall(data)
+				# print 'sock_list_len = ' + str(sock_list_len)
+				# if sock_list_len >= 16384:
+				# 	for item in sock_list:
+				# 		sock.sendall(item)
+				# 	sock_list = []
+				# 	sock_list_len = 0
+				# 	print 'sent bulk data'
 
 class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 	def handle(self):
@@ -161,7 +222,8 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					self.request.setblocking(False)
 					sock.setblocking(False)
 					# forward and inspect data
-					forward_data(self.request, sock, False)
+					#forward_data(self.request, sock, False)
+					simple_forward_data(self.request, sock)
 				else:
 					# send failed reply
 					failed_reply = b''
@@ -210,7 +272,8 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					self.request.setblocking(False)
 					sock.setblocking(False)
 					# forward and inspect data
-					forward_data(self.request, sock, False)
+					#forward_data(self.request, sock, False)
+					simple_forward_data(self.request, sock)
 				else:
 					# send failed reply
 					failed_reply = b''
