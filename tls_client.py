@@ -55,13 +55,14 @@ if __name__ == '__main__':
             # 2 \r\n
             connection.send("GET /bigger.pcap HTTP/1.0\r\n\r\n")
             count = 0
-            block_size = 1024 * 1024
+            block_size = 20000
             while True:
                 r = connection.recv(block_size)
                 if r in (0, 1):
                     print 'received 0 or 1'
                 elif isinstance(r, str):
                     if len(r) > 0:
+                        print 'received ' + str(len(r)) + ' bytes'
                         count = count + len(r)
                     else:
                         print 'received ' + str(count) + 'bytes data, receive file completed'

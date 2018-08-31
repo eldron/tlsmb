@@ -13,9 +13,10 @@ def direct_download_file(server_ip, server_port):
     connection.send(request)
     cnt = 0
     while True:
-        r = connection.recv(2048)
+        r = connection.recv(20480)
         if len(r) > 0:
             cnt = cnt + len(r)
+            print 'received  ' + str(len(r)) + ' bytes'
             #print 'received ' + str(cnt)
             #print r
         else:
@@ -68,10 +69,12 @@ def download_file_through_middlebox(proxy_ip, proxy_port, server_ip, server_port
         file_size = 9637200
         while True:
             r = connection.recv(block_size)
+            #r = sock.recv(block_size)
             if r in (0, 1):
                 print 'received 0 or 1'
             elif isinstance(r, str):
                 if len(r) > 0:
+                    #print 'len r = ' + str(len(r))
                     count = count + len(r)
                     if count >= file_size:
                         print 'received ' + str(count) + ' bytes data, receive file completed'

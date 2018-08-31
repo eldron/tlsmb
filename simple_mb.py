@@ -40,11 +40,14 @@ def parse_method_selection_msg(msg):
 		print_auth_method(ord(msg[i + 2]))
 		i = i + 1
 
+# def recv_tls_tlsrecord(sock):
+# 	# receive complete tls record from sock
 
 def simple_forward_data(request, sock):
 	request.setblocking(0)
 	sock.setblocking(0)
 	inputs = [request, sock]
+	sock_data_len = 0
 	while inputs:
 		readable, writable, exceptional = select.select(inputs, [], inputs)
 		for s in readable:
@@ -53,7 +56,11 @@ def simple_forward_data(request, sock):
 				if s == request:
 					sock.sendall(data)
 				else:
+					sock_data_len += len(data)
+					#print 'sock_data_len = ' + str(sock_data_len)
 					request.sendall(data)
+					# if sock_data_len < 20000:
+					# 	request.sendall(data)
 			else:
 				s.close()
 				inputs.remove(s)

@@ -78,6 +78,7 @@ if __name__ == '__main__':
                 r = sock.recv(block_size)
                 if len(r) > 0:
                     count += len(r)
+                    print 'received ' + str(count) + 'bytes data'
                     if count >= file_size:
                         print 'received ' + str(count) + 'bytes data, exiting'
                         break
