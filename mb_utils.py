@@ -2952,6 +2952,7 @@ def mb_get_settings(client_hello, sever_hello):
 	server_hello: input, of type ServerHello
 	"""
 	settings = HandshakeSettings()
+	settings = settings.validate()
 	ext = client_hello.getExtension(ExtensionType.encrypt_then_mac)
 	settings.useEncryptThenMAC = (ext != None)
 	ext = client_hello.getExtension(ExtensionType.extended_master_secret)
