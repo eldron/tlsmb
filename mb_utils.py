@@ -810,7 +810,7 @@ class MBHandshakeState(object):
 			data = record_layer._decryptAndUnseal(header, data)
 			time2 = time.time()
 			self.dec_interval += (time2 - time1)
-			print 'dec interval = ' + str(self.dec_interval)
+			#print 'dec interval = ' + str(self.dec_interval)
 		elif record_layer._readState and record_layer._readState.encryptThenMAC:
 			data = record_layer._macThenDecrypt(header.type, data)
 		elif record_layer._readState and \
@@ -2917,7 +2917,7 @@ class MBHandshakeState(object):
 		
 		# now ec private key is calculated
 		self.middleman_common()
-		self.select_forward_data(False)
+		self.select_forward_data(True)
 		#no_accumulate_forward_data(self.client_sock, self.server_sock)
 
 	def naive_middleman(self):

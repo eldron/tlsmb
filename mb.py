@@ -254,11 +254,12 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 				self.request.close()
 
 if __name__ == '__main__':
-	if len(sys.argv) != 2:
-		print 'usage: ' + sys.argv[0] + ' port_number'
+	if len(sys.argv) != 3:
+		print 'usage: ' + sys.argv[0] + ' ip port_number'
 	else:
-		port = int(sys.argv[1])
-		server = ThreadedTCPServer(('localhost', port), ThreadedTCPRequestHandler)
+		ip = sys.argv[1]
+		port = int(sys.argv[2])
+		server = ThreadedTCPServer((ip, port), ThreadedTCPRequestHandler)
 		server_thread = threading.Thread(target = server.serve_forever)
 		server_thread.daemon = True
 		server_thread.start()
