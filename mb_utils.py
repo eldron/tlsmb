@@ -10,6 +10,8 @@ import select
 import os.path
 import time
 
+from Queue import Queue
+
 from mb_ec_util import *
 
 MB_STATE_INITIAL_WAIT_CLIENT_HELLO = 0
@@ -657,8 +659,8 @@ class MBHandshakeState(object):
 		self.resuming = False
 
 		# cache data to send
-		self.to_server_list = []
-		self.to_client_list = []
+		self.to_server_list = Queue()
+		self.to_client_list = Queue()
 
 		# ipc socket
 		self.inspection_client_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -672,15 +674,27 @@ class MBHandshakeState(object):
 	def clear_tosend_list(self, toserver):
 		begin = time.time()
 		if toserver:
-			for tosend in self.to_server_list:
-				header, data = tosend
-				self.server_sock.sendall(header.write() + data)
-			self.to_server_list = []
+			tosend = bytearray()
+			while not self.to_server_list.empty():
+				header, data = self.to_server_list.get()
+				tosend += header.write()
+				tosend += data
+			self.server_sock.sendall(tosend)
+			# for tosend in self.to_server_list:
+			# 	header, data = tosend
+			# 	self.server_sock.sendall(header.write() + data)
+			# self.to_server_list = []
 		else:
-			for tosend in self.to_client_list:
-				header, data = tosend
-				self.client_sock.sendall(header.write() + data)
-			self.to_client_list = []
+			tosend = bytearray()
+			while not self.to_client_list.empty():
+				header, data = self.to_client_list.get()
+				tosend += header.write()
+				tosend += data
+			self.client_sock.sendall(tosend)
+			# for tosend in self.to_client_list:
+			# 	header, data = tosend
+			# 	self.client_sock.sendall(header.write() + data)
+			# self.to_client_list = []
 		end = time.time()
 		interval = 1000 * end - 1000 * begin
 		self.clear_tosend_list_interval += interval
@@ -779,19 +793,21 @@ class MBHandshakeState(object):
 
 		(header, data) = result
 
-		# we send the ciphertext to the other party
-		if from_server:
-			self.client_sock.sendall(header.write() + data)
-		else:
-			self.server_sock.sendall(header.write() + data)
+		# # we send the ciphertext to the other party
+		# if from_server:
+		# 	self.client_sock.sendall(header.write() + data)
+		# else:
+		# 	self.server_sock.sendall(header.write() + data)
 
 		#time1 = time.time()
 		# cache the cipher text data to send
 		# send the data when inspection is done
-		# if from_server:
-		#     self.to_client_list.append((header, data))
-		# else:
-		#     self.to_server_list.append((header, data))
+		if from_server:
+		    #self.to_client_list.append((header, data))
+			self.to_client_list.put((header, data))
+		else:
+		    #self.to_server_list.append((header, data))
+			self.to_server_list.put((header, data))
 
 		if isinstance(header, RecordHeader2):
 			data = record_layer._decryptSSL2(data, header.padding)
@@ -810,7 +826,7 @@ class MBHandshakeState(object):
 			data = record_layer._decryptAndUnseal(header, data)
 			time2 = time.time()
 			self.dec_interval += (time2 - time1)
-			#print 'dec interval = ' + str(self.dec_interval)
+			print 'dec interval = ' + str(self.dec_interval)
 		elif record_layer._readState and record_layer._readState.encryptThenMAC:
 			data = record_layer._macThenDecrypt(header.type, data)
 		elif record_layer._readState and \
@@ -2736,7 +2752,7 @@ class MBHandshakeState(object):
 	def select_forward_data(self, perform_inspection):
 		# now we should be able to read decrypted data from client_connection and server_connection
 		# new session ticket is handled in our read function
-		print 'simple_forward_data called'
+		print 'select_forward_data called'
 
 		allowedTypes = (ContentType.application_data, ContentType.handshake, ContentType.alert, ContentType.change_cipher_spec)
 		allowedHsTypes = HandshakeType.new_session_ticket
@@ -2755,7 +2771,7 @@ class MBHandshakeState(object):
 				print 'middleman: server_connection is closed'
 				break
 
-			readable, writable, exceptional = select.select(inputs, [], inputs)
+			readable, writable, exceptional = select.select(inputs, inputs, inputs)
 			if print_debug_info:
 				for s in readable:
 					if s == self.server_sock:
@@ -2766,6 +2782,9 @@ class MBHandshakeState(object):
 			select_interval += (nowtime - lasttime)
 			#print 'select interval = ' + str(select_interval)
 
+			for s in writable:
+				self.clear_tosend_list(s == self.server_sock)
+
 			for s in readable:
 				lasttime = time.time()
 				for result in self._getMsg(s == self.server_sock, allowedTypes, allowedHsTypes):
@@ -2775,7 +2794,8 @@ class MBHandshakeState(object):
 							print 'getMsg yield 0 or 1 from client'
 						else:
 							print 'getMsg yield 0 or 1 from server'
-						break
+						#break
+						continue
 					else:
 						result, parser = result
 						if isinstance(result, ChangeCipherSpec):
@@ -2808,7 +2828,7 @@ class MBHandshakeState(object):
 							else:
 								print 'middleman: received unexpected record from server'
 						# send cached data to server or server
-						self.clear_tosend_list(s == self.client_sock)
+						#self.clear_tosend_list(s == self.client_sock)
 						time2 = time.time()
 						time_interval += (time2 - time1)
 						#print 'time interval = ' + str(time_interval)

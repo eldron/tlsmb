@@ -9,6 +9,8 @@ import ipaddress
 import select
 from mb_utils import *
 
+from Queue import Queue
+
 udp_bind_port = 10000
 udp_associate_support = False
 
@@ -44,26 +46,46 @@ def parse_method_selection_msg(msg):
 # 	# receive complete tls record from sock
 
 def simple_forward_data(request, sock):
+	print 'simple_forward_data called'
 	request.setblocking(0)
 	sock.setblocking(0)
 	inputs = [request, sock]
 	sock_data_len = 0
+	sock_to_send_list = Queue()
+	request_to_send_list = Queue()
 	while inputs:
-		readable, writable, exceptional = select.select(inputs, [], inputs)
+		readable, writable, exceptional = select.select(inputs, inputs, inputs)
 		for s in readable:
-			data = s.recv(2048)
+			data = s.recv(20480)
 			if data:
 				if s == request:
-					sock.sendall(data)
+					#sock.sendall(data)
+					sock_to_send_list.put(data)
 				else:
-					sock_data_len += len(data)
+					request_to_send_list.put(data)
+					#sock_data_len += len(data)
 					#print 'sock_data_len = ' + str(sock_data_len)
-					request.sendall(data)
+					#request.sendall(data)
 					# if sock_data_len < 20000:
 					# 	request.sendall(data)
 			else:
 				s.close()
 				inputs.remove(s)
+		
+		for s in writable:
+			if s == sock:
+				if sock_to_send_list.empty():
+					pass
+				else:
+					item = sock_to_send_list.get()
+					sock.sendall(item)
+			else:
+				if request_to_send_list.empty():
+					pass
+				else:
+					item = request_to_send_list.get()
+					request.sendall(item)
+
 		for s in exceptional:
 			s.close()
 			inputs.remove(s)
@@ -344,7 +366,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 				self.request.close()
 
 if __name__ == '__main__':
-	if len(sys.argv) != 2:
+	if len(sys.argv) != 3:
 		print 'usage: ' + sys.argv[0] + ' ip port_number'
 	else:
 		ip = sys.argv[1]
