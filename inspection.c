@@ -1,66 +1,8 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdint.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-
-#define LINELEN 10000
-#define RELATION_STAR 0
-#define RELATION_EXACT 1
-#define RELATION_MAX 2 // for {-20}
-#define RELATION_MIN 3// for {20-}
-#define RELATION_MINMAX 4 // for {20-30}
-
-#define SEG_SIZE 8
-#define LIST_POOL_SIZE (100 * 1024 * 1024)
-#define MAX_STATES (32 * 1024 * 1024)
-#define EDGE_POOL_SIZE (100 * 1024 * 1024)
-#define BUFFER_SIZE (30 * 1024 * 1024)
-#define CONVERTED_BUFFER_SIZE (30 * 1024 * 1024)
-#define MAX_RULE_NUMBER 100300
-#define AC_BATCH_SIZE 2000
-
-#define RULE_TYPE_CLAMAV 0
-#define RULE_TYPE_SNORT 1
-#define RULE_TYPE_STRING 2
-
-#define SERVER_ADDRESS "inspection_server"
+#include "inspection.h"
 
 unsigned char * mem_pool;
 int mem_pool_max;
 int mem_pool_idx;
-
-struct list_node{
-	void * ptr;
-	struct list_node * next;
-};
-
-struct edge{
-	unsigned char token;
-	int state_number;// initialize to -2
-};
-
-struct state{
-	int state_number;
-	//struct edge edges[256];
-	struct list_node * edges;
-	int fail_state_number;
-	struct list_node * output;
-};
-
-struct signature_fragment{
-	int type;
-	int min;
-	int max;
-	unsigned char * s;
-	unsigned char hit;
-	struct clamav_rule * rule;
-	int len;
-	int offset;// set during inspection
-};
 
 void initialize_signature_fragment(struct signature_fragment * sf){
 	sf->type = 0;
@@ -72,32 +14,6 @@ void initialize_signature_fragment(struct signature_fragment * sf){
 	sf->len = 0;
 	sf->offset = 0;
 }
-
-struct snort_content{
-	unsigned char * content;
-	int content_len;
-	int distance;
-	int within;
-	unsigned char has_distance;
-	unsigned char has_within;
-	unsigned char hit;
-	int offset;// set during inspection
-	struct snort_rule * rule;
-};
-
-struct clamav_rule{
-	char * rulename;
-	int sfs_count;
-	struct signature_fragment sfs[30];
-	int hit;// for debug
-};
-
-struct snort_rule{
-	int sid;
-	int hit;
-	struct snort_content contents[30];
-	int content_list_len;
-};
 
 struct edge * get_edge(){
 	if(mem_pool_idx + sizeof(struct edge) > mem_pool_max){
@@ -1134,15 +1050,6 @@ void print_states(struct state * states, int states_len, int type){
 	}
 }
 
-struct rule_inspect{
-	struct state * states;
-	int states_len;
-	struct list_node * rules;
-	int number_of_rules;
-	int global_state_number;
-	struct list_node * matched_rules;
-};
-
 // number_of_rules should not be -1
 void initialize_rule_inspect(int rule_type, struct rule_inspect * ins, char * filename, int number_of_rules){
 	ins->states = initialize_states();
@@ -1249,7 +1156,7 @@ int main(int argc, char ** args){
 			// }
 			int len = fread(buffer, 1, data_len, fin);
 			for(i = 0;i < len;i++){
-				ac_inspect(rule_type, ins.states, &(ins.global_state_number), token, offset, &(ins.matched_rules));
+				ac_inspect(rule_type, ins.states, &(ins.global_state_number), buffer[i], offset, &(ins.matched_rules));
 				offset++;
 			}
 			if(ins.matched_rules){

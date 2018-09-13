@@ -28,6 +28,137 @@ MB_STATE_WAIT_CLIENT_FINISHED = 10
 
 print_debug_info = False
 
+def mb_sockRecvAll(sock, length):
+	"""
+	Read exactly the amount of bytes specified in L{length} from raw socket.
+
+	:rtype: generator
+	:returns: generator that will return 0 or 1 in case the socket is non
+		blocking and would block and bytearray in case the read finished
+	:raises TLSAbruptCloseError: when the socket closed
+	"""
+	buf = bytearray(0)
+
+	if length == 0:
+		yield buf
+
+	while True:
+		try:
+			socketBytes = sock.recv(length - len(buf))
+		except socket.error as why:
+			if why.args[0] in (errno.EWOULDBLOCK, errno.EAGAIN):
+				yield 0
+				continue
+			else:
+				raise
+
+		#if the connection closed, raise socket error
+		if len(socketBytes) == 0:
+			raise TLSAbruptCloseError()
+
+		buf += bytearray(socketBytes)
+		if len(buf) == length:
+			yield buf
+
+def mb_recvHeader(sock):
+	"""Read a single record header from socket"""
+	#Read the next record header
+	buf = bytearray(0)
+	ssl2 = False
+
+	result = None
+	for result in mb_sockRecvAll(sock, 1):
+		if result in (0, 1):
+			yield result
+		else: break
+	assert result is not None
+
+	buf += result
+
+	if buf[0] in ContentType.all:
+		ssl2 = False
+		# SSLv3 record layer header is 5 bytes long, we already read 1
+		result = None
+		for result in mb_sockRecvAll(sock, 4):
+			if result in (0, 1):
+				yield result
+			else: break
+		assert result is not None
+		buf += result
+	else:
+		# if header has no pading the header is 2 bytes long, 3 otherwise
+		# at the same time we already read 1 byte
+		ssl2 = True
+		if buf[0] & 0x80:
+			readLen = 1
+		else:
+			readLen = 2
+		result = None
+		for result in mb_sockRecvAll(sock, readLen):
+			if result in (0, 1):
+				yield result
+			else: break
+		assert result is not None
+		buf += result
+
+
+	#Parse the record header
+	if ssl2:
+		record = RecordHeader2().parse(Parser(buf))
+		# padding can't be longer than overall length and if it is present
+		# the overall size must be a multiple of cipher block size
+		if ((record.padding > record.length) or
+				(record.padding and record.length % 8)):
+			raise TLSIllegalParameterException(\
+					"Malformed record layer header")
+	else:
+		record = RecordHeader3().parse(Parser(buf))
+
+	yield record
+
+def mb_recv(sock):
+	"""
+	Read a single record from socket, handle SSLv2 and SSLv3 record layer
+
+	:rtype: generator
+	:returns: generator that returns 0 or 1 in case the read would be
+		blocking or a tuple containing record header (object) and record
+		data (bytearray) read from socket
+	:raises socket.error: In case of network error
+	:raises TLSAbruptCloseError: When the socket was closed on the other
+		side in middle of record receiving
+	:raises TLSRecordOverflow: When the received record was longer than
+		allowed by TLS
+	:raises TLSIllegalParameterException: When the record header was
+		malformed
+	"""
+	record = None
+	for record in mb_recvHeader(sock):
+		if record in (0, 1):
+			yield record
+		else: break
+	assert record is not None
+
+	#Check the record header fields
+	# 18432 = 2**14 (basic record size limit) + 1024 (maximum compression
+	# overhead) + 1024 (maximum encryption overhead)
+	if record.length > 18432:
+		raise TLSRecordOverflow()
+
+	#Read the record contents
+	buf = bytearray(0)
+
+	result = None
+	for result in mb_sockRecvAll(sock, record.length):
+		if result in (0, 1):
+			yield result
+		else: break
+	assert result is not None
+
+	buf += result
+
+	yield (record, buf)
+
 def no_accumulate_forward_data(request, sock):
 	request.setblocking(0)
 	sock.setblocking(0)
@@ -2748,6 +2879,65 @@ class MBHandshakeState(object):
 			self.inspection_client_sock.sendall(tosend)
 			# read reply
 			reply = self.inspection_client_sock.recv(1)
+
+	def select_forward_record(self, perform_inspection):
+		# send key, static iv and sequence number to inspection server
+		writer = Writer()
+		writer.add(self.server_connection._recordLayer._readState.seqnum, 8)
+		self.inspection_client_sock.sendall( + writer.bytes())
+		inputs = [self.client_sock, self.server_sock]
+		client_header = None
+		client_record = None
+		server_header = None
+		server_record = None
+		client_to_send = []
+		server_to_send = []
+		while inputs:
+			readable, writable, exceptional = select.select(inputs, inputs, inputs)
+
+			for s in writable:
+				if s == self.client_sock:
+					data = []
+					for item in client_to_send:
+						data += item
+					if data:
+						self.client_sock.sendall(data)
+						client_to_send = []
+				if s == self.server_sock:
+					data = []
+					for item in server_to_send:
+						data += item
+					if data:
+						self.server_sock.sendall(data)
+						server_to_send = []
+			
+			for s in readable:
+				if s == self.client_sock:
+					for r in mb_recv(self.client_sock):
+						if r in (0, 1):
+							continue
+						else:
+							client_header, client_record = r
+							server_to_send.append(client_header.write() + client_record)
+							break
+
+				if s == self.server_sock:
+					for r in mb_recv(self.server_sock):
+						if r in (0, 1):
+							continue
+						else:
+							server_header, server_record = r
+							data = server_header.write() + server_record
+							client_to_send.append(data)
+							self.inspection_client_sock.sendall(data)
+							break
+
+			if len(exceptional) > 0:
+				print 'exception happened'
+				self.client_sock.close()
+				self.server_sock.close()
+				break
+
 
 	def select_forward_data(self, perform_inspection):
 		# now we should be able to read decrypted data from client_connection and server_connection
