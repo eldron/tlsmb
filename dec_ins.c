@@ -10,7 +10,7 @@ uint64_t bytes_to_uint64t(unsigned char * buf){
     uint64_t value = 0;
     int i = 0;
     for(i = 0;i < 8;i++){
-        value = value | ((uint64_t buf[i]) << ((8 - i) * 8));
+        value = value | (((uint64_t) buf[i]) << ((7 - i) * 8));
     }
     return value;
 }
@@ -19,15 +19,18 @@ uint64_t bytes_to_uint64t(unsigned char * buf){
 void uint64t_to_bytes(uint64_t value, unsigned char * buf){
     int i;
     for(i = 0;i < 8;i++){
-        buf[i] = (value >> ((8 - i) * 8)) & 0x00000000000000ff;
+        buf[i] = (value >> ((7 - i) * 8)) & 0x00000000000000ff;
     }
+
+    printf("sequence number bytes are:\n");
+    BIO_dump_fp(stdout, buf, 8);
 }
 
 void get_nonce(uint64_t * number, unsigned char * nonce, unsigned char * static_iv){
     unsigned char tmp[12];
     memset(tmp, 0, 12);
     uint64t_to_bytes(*number, tmp + 4);
-    *number++;
+    (*number)++;
 
     int i;
     for(i = 0;i < 12;i++){
@@ -99,13 +102,14 @@ int main(){
         printf("read seqnum secceeded\n");
     }
     uint64_t sequence_number = bytes_to_uint64t(seqnum);
-
+    printf("seq number = %ul\n", sequence_number);
+    
     EVP_CIPHER_CTX *ctx;
     ctx = EVP_CIPHER_CTX_new();
     /* Select cipher */
     EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL);
     /* Set IV length, omit for 96 bits */
-    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_IVLEN, sizeof(gcm_iv), NULL);
+    EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_IVLEN, 12, NULL);
 
     unsigned char record[1000000];// TLSCiphertext 
     unsigned char header[5];
@@ -117,54 +121,55 @@ int main(){
     while(1){
         len = fread(header, 1, 1, fin);
         if(len == 1){
-            printf("received opaque type\n");
+            //printf("received opaque type\n");
         } else {
-            printf("receive opaque type failed\n");
+            printf("receive opaque type failed, len = %d\n", len);
         }
         unsigned char opaque_type = header[0];
         if(opaque_type == 23){
-            printf("opaque type correct\n");
+            //printf("opaque type correct\n");
         } else {
             printf("opaque type wrong\n");
         }
 
         len = fread(header + 1, 1, 2, fin);
         if(len == 2){
-            printf("read version succeeded\n");
+            //printf("read version succeeded\n");
         } else {
-            printf("read version failed\n");
+            printf("read version failed, len = %d\n", len);
         }
         unsigned int version = (header[1] << 8) | header[2];
         if(version != 0x0303){
             printf("legacy record version is not 0x0303\n");
         } else {
-            printf("legacy record version is 0x0303\n");
+            //printf("legacy record version is 0x0303\n");
         }
 
         len = fread(header + 3, 1, 2, fin);
         if(len == 2){
-            printf("read length succeeded\n");
+            //printf("read length succeeded\n");
         } else {
-            printf("read length failed\n");
+            printf("read length failed, len = %d\n", len);
         }
         unsigned int ciphertext_len = (header[3] << 8) | header[4];
         
         len = fread(record, 1, ciphertext_len, fin);
         if(len == ciphertext_len){
-            printf("read encrypted record succeeded\n");
+            //printf("read encrypted record succeeded\n");
         } else {
-            printf("read encrypted record failed\n");
+            printf("read encrypted record failed, len = %d, ciphertext len = %d\n", len, ciphertext_len);
             return 0;
         }
         unsigned char * gcmtag = record + (len - 16);
 
         get_nonce(&sequence_number, nonce, static_iv);
+        printf("sequence number = %ul\n", sequence_number);
         /* Specify key and nonce */
         EVP_DecryptInit_ex(ctx, NULL, NULL, key, nonce);
         /* Zero or more calls to specify any AAD */
         EVP_DecryptUpdate(ctx, NULL, &outlen, header, 5);
         /* Decrypt plaintext */
-        EVP_DecryptUpdate(ctx, outbuf, &outlen, record, len);
+        EVP_DecryptUpdate(ctx, outbuf, &outlen, record, len - 16);
         /* Set expected tag value. */
         EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, 16, gcmtag);
         /* Finalise: note get no output for GCM */
@@ -172,7 +177,7 @@ int main(){
         if(rv){
             printf("decryption secceeded\n");
         } else {
-            printf("decryption failed\n");
+            //printf("decryption failed\n");
         }
     }
 }

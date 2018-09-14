@@ -801,6 +801,10 @@ class MBHandshakeState(object):
 		self.app_data_len = 0
 		self.dec_interval = 0
 
+		self.client_key = None
+		self.client_static_iv = None
+		self.server_key = None
+		self.server_static_iv = None
 
 	def clear_tosend_list(self, toserver):
 		begin = time.time()
@@ -934,10 +938,10 @@ class MBHandshakeState(object):
 		# cache the cipher text data to send
 		# send the data when inspection is done
 		if from_server:
-		    #self.to_client_list.append((header, data))
+			#self.to_client_list.append((header, data))
 			self.to_client_list.put((header, data))
 		else:
-		    #self.to_server_list.append((header, data))
+			#self.to_server_list.append((header, data))
 			self.to_server_list.put((header, data))
 
 		if isinstance(header, RecordHeader2):
@@ -2036,6 +2040,30 @@ class MBHandshakeState(object):
 		self.server_connection._changeWriteState()
 		return server_finish_hs
 
+	def cal_write_key_and_static_iv(self, cipherSuite, cl_traffic_secret, sr_traffic_secret):
+		prf_name = 'sha384' if cipherSuite \
+				   in CipherSuite.sha384PrfSuites \
+				   else 'sha256'
+
+		key_length, iv_length, cipher_func = \
+			self.server_connection._recordLayer._getCipherSettings(cipherSuite)
+		iv_length = 12
+		
+		self.client_key = HKDF_expand_label(cl_traffic_secret, b"key", b"", key_length, prf_name)
+		self.client_static_iv = HKDF_expand_label(cl_traffic_secret, b"iv", b"", iv_length, prf_name)
+		self.server_key = HKDF_expand_label(sr_traffic_secret, b"key", b"", key_length, prf_name)
+		self.server_static_iv = HKDF_expand_label(sr_traffic_secret, b"iv", b"", iv_length, prf_name)
+		
+		if self.client_static_iv == self.server_connection._recordLayer._writeState.fixedNonce:
+			print 'client static iv == fixed nonce'
+		else:
+			print 'client static iv != fixed nonce'
+
+		if self.server_static_iv == self.server_connection._recordLayer._readState.fixedNonce:
+			print 'server static iv == fixed nonce'
+		else:
+			print 'server static iv != fixed nonce'
+
 	# we received decrypted finished from client_connection
 	def server_connection_handle_client_finished(self, finished, secret, prf_size, prfName, server_finish_hs, certificate):
 		self.server_connection._handshake_hash.update(self.client_finished_parser.bytes)
@@ -2109,6 +2137,7 @@ class MBHandshakeState(object):
 		self._serverRandom = serverHello.random
 		self._clientRandom = clientHello.random
 
+		self.cal_write_key_and_static_iv(serverHello.cipher_suite, cl_app_traffic, sr_app_traffic)
 		# print traffic keys
 		if print_debug_info:
 			print 'server_connection_handle_client_finished print begin:'
@@ -2884,7 +2913,14 @@ class MBHandshakeState(object):
 		# send key, static iv and sequence number to inspection server
 		writer = Writer()
 		writer.add(self.server_connection._recordLayer._readState.seqnum, 8)
-		self.inspection_client_sock.sendall( + writer.bytes())
+		tosend = self.server_key + self.server_connection._recordLayer._readState.fixedNonce
+		tosend += writer.bytes
+		print 'self.server key length = ' + str(len(self.server_key))
+		print 'fixed nonce length = ' + str(len(self.server_connection._recordLayer._readState.fixedNonce))
+		print 'sequence number length = ' + str(len(writer.bytes))
+		print 'sequence number = ' + str(self.server_connection._recordLayer._readState.seqnum)
+		self.inspection_client_sock.sendall(tosend)
+
 		inputs = [self.client_sock, self.server_sock]
 		client_header = None
 		client_record = None
@@ -2897,14 +2933,14 @@ class MBHandshakeState(object):
 
 			for s in writable:
 				if s == self.client_sock:
-					data = []
+					data = bytearray()
 					for item in client_to_send:
 						data += item
 					if data:
 						self.client_sock.sendall(data)
 						client_to_send = []
 				if s == self.server_sock:
-					data = []
+					data = bytearray()
 					for item in server_to_send:
 						data += item
 					if data:
@@ -2929,7 +2965,8 @@ class MBHandshakeState(object):
 							server_header, server_record = r
 							data = server_header.write() + server_record
 							client_to_send.append(data)
-							self.inspection_client_sock.sendall(data)
+							if perform_inspection and server_header.type == ContentType.application_data:
+								self.inspection_client_sock.sendall(data)
 							break
 
 			if len(exceptional) > 0:
@@ -3127,7 +3164,8 @@ class MBHandshakeState(object):
 		
 		# now ec private key is calculated
 		self.middleman_common()
-		self.select_forward_data(True)
+		#self.select_forward_data(True)
+		self.select_forward_record(True)
 		#no_accumulate_forward_data(self.client_sock, self.server_sock)
 
 	def naive_middleman(self):
