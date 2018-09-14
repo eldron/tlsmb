@@ -7,4 +7,4 @@ LDFLAGS = $(OPENSSL_LIBS_LOCATION) -lssl -lcrypto
 all: dec_ins
 
 dec_ins:
-	gcc dec_ins.c -o dec_ins $(CFLAGS) $(LDFLAGS)
+	gcc dec_ins.c inspection.c -o dec_ins $(CFLAGS) $(LDFLAGS)

@@ -22,8 +22,8 @@ void uint64t_to_bytes(uint64_t value, unsigned char * buf){
         buf[i] = (value >> ((7 - i) * 8)) & 0x00000000000000ff;
     }
 
-    printf("sequence number bytes are:\n");
-    BIO_dump_fp(stdout, buf, 8);
+    // printf("sequence number bytes are:\n");
+    // BIO_dump_fp(stdout, buf, 8);
 }
 
 void get_nonce(uint64_t * number, unsigned char * nonce, unsigned char * static_iv){
@@ -38,7 +38,21 @@ void get_nonce(uint64_t * number, unsigned char * nonce, unsigned char * static_
     }
 }
 
-int main(){
+int main(int argc, char ** args){
+    if(argc != 4){
+		fprintf(stderr, "usage: %s rule_type rule_file number_of_rules\n", args[0]);
+		exit(1);
+	}
+
+	int rule_type = atoi(args[1]);
+	char * rule_file = args[2];
+	int number_of_rules = atoi(args[3]);
+	initialize_mem_pool();
+	fprintf(stderr, "mem pool initialized\n");
+
+	struct rule_inspect ins;
+	initialize_rule_inspect(rule_type, &ins, rule_file, number_of_rules);
+
     int server_sock;
 	if((server_sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0){
 		perror("create unix server socket failed");
@@ -117,6 +131,11 @@ int main(){
     unsigned char outbuf[1000000];
     int outlen;
     int rv;
+    int offset = 0;
+    unsigned char matched_reply[1];
+	matched_reply[0] = 1;
+	unsigned char no_match_reply[1];
+	no_match_reply[0] = 0;
 
     while(1){
         len = fread(header, 1, 1, fin);
@@ -139,10 +158,10 @@ int main(){
             printf("read version failed, len = %d\n", len);
         }
         unsigned int version = (header[1] << 8) | header[2];
-        if(version != 0x0303){
-            printf("legacy record version is not 0x0303\n");
+        if(version == 0x0303){
+
         } else {
-            //printf("legacy record version is 0x0303\n");
+            printf("version is not 0x0303\n");
         }
 
         len = fread(header + 3, 1, 2, fin);
@@ -163,19 +182,36 @@ int main(){
         unsigned char * gcmtag = record + (len - 16);
 
         get_nonce(&sequence_number, nonce, static_iv);
-        printf("sequence number = %ul\n", sequence_number);
+        //printf("sequence number = %ul\n", sequence_number);
         /* Specify key and nonce */
         EVP_DecryptInit_ex(ctx, NULL, NULL, key, nonce);
         /* Zero or more calls to specify any AAD */
         EVP_DecryptUpdate(ctx, NULL, &outlen, header, 5);
         /* Decrypt plaintext */
         EVP_DecryptUpdate(ctx, outbuf, &outlen, record, len - 16);
+
+        // perform inspection on the decrypted data
+        while(outbuf[outlen - 1] == 0){
+            outlen--;
+        }
+        outlen--;
+        int i;
+        for(i = 0;i < outlen;i++){
+            ac_inspect(rule_type, ins.states, &(ins.global_state_number), outbuf[i], offset, &(ins.matched_rules));
+			offset++;
+        }
+        if(ins.matched_rules){
+			send(client_sock, matched_reply, 1, 0);
+		} else {
+			send(client_sock, no_match_reply, 1, 0);
+		}
+
         /* Set expected tag value. */
         EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, 16, gcmtag);
         /* Finalise: note get no output for GCM */
         rv = EVP_DecryptFinal_ex(ctx, outbuf, &outlen);
         if(rv){
-            printf("decryption secceeded\n");
+            //printf("decryption secceeded\n");
         } else {
             //printf("decryption failed\n");
         }

@@ -2967,6 +2967,8 @@ class MBHandshakeState(object):
 							client_to_send.append(data)
 							if perform_inspection and server_header.type == ContentType.application_data:
 								self.inspection_client_sock.sendall(data)
+								# read inspection result
+								reply = self.inspection_client_sock.recv(1)
 							break
 
 			if len(exceptional) > 0:
