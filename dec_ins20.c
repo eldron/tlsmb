@@ -126,7 +126,7 @@ int main(int argc, char ** args){
     EVP_CIPHER_CTX *ctx;
     ctx = EVP_CIPHER_CTX_new();
     /* Select cipher */
-    EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL);
+    EVP_DecryptInit_ex(ctx, EVP_chacha20_poly1305(), NULL, NULL, NULL);
     /* Set IV length, omit for 96 bits */
     EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_IVLEN, 12, NULL);
 

@@ -97,11 +97,11 @@ int main(int argc, char ** args){
 	// we use stdio to read the socket
 	FILE * fin = fdopen(client_sock, "r");
 
-    unsigned char key[32];
+    unsigned char key[16];
     unsigned char static_iv[12];
     unsigned char seqnum[8];
     int len;
-    len = fread(key, 1, 32, fin);
+    len = fread(key, 1, 16, fin);
     if(len != 32){
         printf("read key failed\n");
     } else {
@@ -126,7 +126,7 @@ int main(int argc, char ** args){
     EVP_CIPHER_CTX *ctx;
     ctx = EVP_CIPHER_CTX_new();
     /* Select cipher */
-    EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL);
+    EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, NULL, NULL);
     /* Set IV length, omit for 96 bits */
     EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_IVLEN, 12, NULL);
 

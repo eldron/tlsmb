@@ -8,13 +8,15 @@ import mb_utils
 # the naive version
 
 if __name__ == '__main__':
-    if len(sys.argv) != 5:
-        print 'usage: ' + sys.argv[0] + ' proxy_ip proxy_port server_ip server_port'
+    if len(sys.argv) != 6:
+        print 'usage: ' + sys.argv[0] + ' proxy_ip proxy_port server_ip server_port cipher_suite'
     else:
         proxy_ip = sys.argv[1]
         proxy_port = int(sys.argv[2])
         server_ip = sys.argv[3]
         server_port = int(sys.argv[4])
+        cipher_suite = sys.argv[5]
+
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.connect((proxy_ip, proxy_port))
         # send version and authentication method to the socks 5 proxy 
@@ -51,7 +53,9 @@ if __name__ == '__main__':
             print 'received succeeded reply, socks 5 proxy established connection with the remote server'
             # now use sock to establish TLS 1.3 connection with the remote server
             connection = TLSConnection(sock)
-            mb_utils.fake_handshakeClientCert(connection)
+            settings = HandshakeSettings()
+            settings.cipherNames = [cipher_suite]
+            mb_utils.fake_handshakeClientCert(connection, settings=settings)
             # 2 \r\n
             connection.send("GET /bigger.pcap HTTP/1.0\r\n\r\n")
             count = 0
