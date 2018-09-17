@@ -47,11 +47,16 @@ int main(int argc, char ** args){
 	int rule_type = atoi(args[1]);
 	char * rule_file = args[2];
 	int number_of_rules = atoi(args[3]);
-	initialize_mem_pool();
+
+    if(number_of_rules > 0){
+	    initialize_mem_pool();
+    }
 	fprintf(stderr, "mem pool initialized\n");
 
 	struct rule_inspect ins;
-	initialize_rule_inspect(rule_type, &ins, rule_file, number_of_rules);
+    if(number_of_rules > 0){
+	    initialize_rule_inspect(rule_type, &ins, rule_file, number_of_rules);
+    }
 
     int server_sock;
 	if((server_sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0){
@@ -195,10 +200,13 @@ int main(int argc, char ** args){
             outlen--;
         }
         outlen--;
-        int i;
-        for(i = 0;i < outlen;i++){
-            ac_inspect(rule_type, ins.states, &(ins.global_state_number), outbuf[i], offset, &(ins.matched_rules));
-			offset++;
+
+        if(number_of_rules > 0){
+            int i;
+            for(i = 0;i < outlen;i++){
+                ac_inspect(rule_type, ins.states, &(ins.global_state_number), outbuf[i], offset, &(ins.matched_rules));
+                offset++;
+            }
         }
         if(ins.matched_rules){
 			send(client_sock, matched_reply, 1, 0);

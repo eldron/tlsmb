@@ -13,6 +13,7 @@ from Queue import Queue
 
 udp_bind_port = 10000
 udp_associate_support = False
+perform_inspection = False
 
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 	pass
@@ -176,7 +177,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					sock.setblocking(False)
 					# forward and inspect data
 					#forward_data(self.request, sock, False)
-					simple_forward_data(self.request, sock, True)
+					simple_forward_data(self.request, sock, perform_inspection)
 				else:
 					# send failed reply
 					failed_reply = b''
@@ -226,7 +227,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					sock.setblocking(False)
 					# forward and inspect data
 					#forward_data(self.request, sock, False)
-					simple_forward_data(self.request, sock, True)
+					simple_forward_data(self.request, sock, perform_inspection)
 				else:
 					# send failed reply
 					failed_reply = b''
@@ -290,11 +291,14 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 				self.request.close()
 
 if __name__ == '__main__':
-	if len(sys.argv) != 3:
-		print 'usage: ' + sys.argv[0] + ' ip port_number'
+	if len(sys.argv) != 4:
+		print 'usage: ' + sys.argv[0] + ' ip port_number perform_inspection'
 	else:
 		ip = sys.argv[1]
 		port = int(sys.argv[2])
+		tmp = int(sys.argv[3])
+		perform_inspection = (tmp == 1)
+
 		server = ThreadedTCPServer((ip, port), ThreadedTCPRequestHandler)
 		server.serve_forever()
 		# server_thread = threading.Thread(target = server.serve_forever)

@@ -744,7 +744,8 @@ def fake_clientSendClientHello(connection, settings, session, srpUsername,
 
 
 class MBHandshakeState(object):
-	def __init__(self):
+	def __init__(self, perform_inspection):
+		self.perform_inspection = perform_inspection
 		self.client_hello = None
 		self.server_hello = None
 		self.state = MB_STATE_INITIAL_WAIT_CLIENT_HELLO
@@ -794,8 +795,9 @@ class MBHandshakeState(object):
 		self.to_client_list = Queue()
 
 		# ipc socket
-		self.inspection_client_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-		self.inspection_client_sock.connect('inspection_server')
+		if self.perform_inspection:
+			self.inspection_client_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+			self.inspection_client_sock.connect('inspection_server')
 
 		self.clear_tosend_list_interval = 0
 		self.app_data_len = 0
@@ -2890,36 +2892,37 @@ class MBHandshakeState(object):
 			self.client_sock.close()
 			self.server_sock.close()
 
-	def inspection_data(self, data):
-		# data is of type byte array
-		#print 'inspection_data is called'
-		data_len = len(data)
-		self.app_data_len += data_len
-		if self.app_data_len >= 9637000:
-			print 'clean tosend list interval is: ' + str(self.clear_tosend_list_interval)
+	# def inspection_data(self, data):
+	# 	# data is of type byte array
+	# 	#print 'inspection_data is called'
+	# 	data_len = len(data)
+	# 	self.app_data_len += data_len
+	# 	if self.app_data_len >= 9637000:
+	# 		print 'clean tosend list interval is: ' + str(self.clear_tosend_list_interval)
 
-		if 0 < data_len and data_len <= 0xffff:
-			high = (data_len & 0xff00) >> 8
-			low = data_len & 0x00ff
-			tosend = bytearray()
-			tosend.append(high)
-			tosend.append(low)
-			tosend = tosend + data
-			self.inspection_client_sock.sendall(tosend)
-			# read reply
-			reply = self.inspection_client_sock.recv(1)
+	# 	if 0 < data_len and data_len <= 0xffff:
+	# 		high = (data_len & 0xff00) >> 8
+	# 		low = data_len & 0x00ff
+	# 		tosend = bytearray()
+	# 		tosend.append(high)
+	# 		tosend.append(low)
+	# 		tosend = tosend + data
+	# 		self.inspection_client_sock.sendall(tosend)
+	# 		# read reply
+	# 		reply = self.inspection_client_sock.recv(1)
 
-	def select_forward_record(self, perform_inspection):
+	def select_forward_record(self):
 		# send key, static iv and sequence number to inspection server
-		writer = Writer()
-		writer.add(self.server_connection._recordLayer._readState.seqnum, 8)
-		tosend = self.server_key + self.server_connection._recordLayer._readState.fixedNonce
-		tosend += writer.bytes
-		print 'self.server key length = ' + str(len(self.server_key))
-		print 'fixed nonce length = ' + str(len(self.server_connection._recordLayer._readState.fixedNonce))
-		print 'sequence number length = ' + str(len(writer.bytes))
-		print 'sequence number = ' + str(self.server_connection._recordLayer._readState.seqnum)
-		self.inspection_client_sock.sendall(tosend)
+		if self.perform_inspection:
+			writer = Writer()
+			writer.add(self.server_connection._recordLayer._readState.seqnum, 8)
+			tosend = self.server_key + self.server_connection._recordLayer._readState.fixedNonce
+			tosend += writer.bytes
+			print 'self.server key length = ' + str(len(self.server_key))
+			print 'fixed nonce length = ' + str(len(self.server_connection._recordLayer._readState.fixedNonce))
+			print 'sequence number length = ' + str(len(writer.bytes))
+			print 'sequence number = ' + str(self.server_connection._recordLayer._readState.seqnum)
+			self.inspection_client_sock.sendall(tosend)
 
 		inputs = [self.client_sock, self.server_sock]
 		client_header = None
@@ -2965,7 +2968,7 @@ class MBHandshakeState(object):
 							server_header, server_record = r
 							data = server_header.write() + server_record
 							client_to_send.append(data)
-							if perform_inspection and server_header.type == ContentType.application_data:
+							if self.perform_inspection and server_header.type == ContentType.application_data:
 								self.inspection_client_sock.sendall(data)
 								# read inspection result
 								reply = self.inspection_client_sock.recv(1)
@@ -3167,7 +3170,7 @@ class MBHandshakeState(object):
 		# now ec private key is calculated
 		self.middleman_common()
 		#self.select_forward_data(True)
-		self.select_forward_record(True)
+		self.select_forward_record()
 		#no_accumulate_forward_data(self.client_sock, self.server_sock)
 
 	def naive_middleman(self):
