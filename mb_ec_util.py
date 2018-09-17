@@ -237,7 +237,7 @@ def stateless_gen_private_key(curve_name, g_a_b):
         private_key = long(hash_result[0])
         for i in range(47):
             private_key = private_key << 8 + hash_result[i + 1]
-        private_key = private_key % curve.generate.order()
+        private_key = private_key % curve.generator.order()
         return private_key
     elif curve_name == 'secp521r1':
         curve = getCurveByName(curve_name)

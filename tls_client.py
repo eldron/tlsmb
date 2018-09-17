@@ -8,14 +8,17 @@ import mb_utils
 # the naive version
 
 if __name__ == '__main__':
-    if len(sys.argv) != 6:
-        print 'usage: ' + sys.argv[0] + ' proxy_ip proxy_port server_ip server_port cipher_suite'
+    if len(sys.argv) != 7:
+        print 'usage: ' + sys.argv[0] + ' proxy_ip proxy_port server_ip server_port cipher_suite curve_name'
+        print 'cipher_suite can be aes128gcm, aes256gcm or chacha20-poly1305'
+        print 'curve_name can be x25519, x448, secp256r1, secp384r1 or secp521r1'
     else:
         proxy_ip = sys.argv[1]
         proxy_port = int(sys.argv[2])
         server_ip = sys.argv[3]
         server_port = int(sys.argv[4])
         cipher_suite = sys.argv[5]
+        curve_name = sys.argv[6]
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.connect((proxy_ip, proxy_port))
@@ -54,7 +57,10 @@ if __name__ == '__main__':
             # now use sock to establish TLS 1.3 connection with the remote server
             connection = TLSConnection(sock)
             settings = HandshakeSettings()
-            settings.cipherNames = [cipher_suite]
+            settings.cipherNames = [cipher_suit]
+            settings.eccCurves = list([curve_name])
+            settings.defaultCurve = curve_name
+            settings.keyShares = [curve_name]
             mb_utils.fake_handshakeClientCert(connection, settings=settings)
             # 2 \r\n
             connection.send("GET /bigger.pcap HTTP/1.0\r\n\r\n")
