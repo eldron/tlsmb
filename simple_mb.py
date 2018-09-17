@@ -45,7 +45,11 @@ def parse_method_selection_msg(msg):
 # def recv_tls_tlsrecord(sock):
 # 	# receive complete tls record from sock
 
-def simple_forward_data(request, sock):
+def simple_forward_data(request, sock, perform_inspection):
+	if perform_inspection:
+		inspection_client_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+		inspection_client_sock.connect('inspection_server')
+
 	print 'simple_forward_data called'
 	request.setblocking(0)
 	sock.setblocking(0)
@@ -62,12 +66,19 @@ def simple_forward_data(request, sock):
 					#sock.sendall(data)
 					sock_to_send_list.put(data)
 				else:
+					if perform_inspection:
+						datalen = len(data)
+						tosend = bytearray()
+						high = (datalen & 0xff00) >> 8
+						low = datalen &0x00ff
+						tosend.append(high)
+						tosend.append(low)
+						tosend += data
+						inspection_client_sock.sendall(tosend)
+						print 'write data to inspection sock'
+						# read reply from inspection server
+						reply = inspection_client_sock.recv(1)
 					request_to_send_list.put(data)
-					#sock_data_len += len(data)
-					#print 'sock_data_len = ' + str(sock_data_len)
-					#request.sendall(data)
-					# if sock_data_len < 20000:
-					# 	request.sendall(data)
 			else:
 				s.close()
 				inputs.remove(s)
@@ -90,93 +101,6 @@ def simple_forward_data(request, sock):
 			s.close()
 			inputs.remove(s)
 
-# def simple_forward_data(request, sock):
-# 	request.setblocking(False)
-# 	sock.setblocking(False)
-# 	request_list = []
-# 	request_list_len = 0
-# 	while True:
-# 		data = request.recv(2048)
-# 		sock.sendall(data)
-
-# 		data = sock.recv(2048)
-# 		if len(data) > 0:
-# 			request_list.append(data)
-# 			request_list_len += len(data)
-# 			if request_list_len >= 16384:
-# 				for item in request_list:
-# 					request.sendall(item)
-# 				request_list_len = 0
-
-# request is connected to client
-# sock is connected with server
-def forward_data(request, sock, perform_inspection):
-	if perform_inspection:
-		inspection_client_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-		inspection_client_sock.connect('inspection_server')
-
-	request.setblocking(False)
-	sock.setblocking(False)
-	sel = selectors.DefaultSelector()
-	sel.register(request, selectors.EVENT_READ)
-	sel.register(sock, selectors.EVENT_READ)
-	server_data_count = 0
-	client_data_count = 0
-	request_list = []
-	request_list_len = 0
-	sock_list = []
-	sock_list_len = 0
-	while True:
-		events = sel.select()
-		for key, mask in events:
-			if key.fileobj == sock:
-				data = sock.recv(2048)
-				request_list.append(data)
-				request_list_len += len(data)
-				if perform_inspection:
-					data_len = len(data)
-					if 0 < data_len and data_len <= 0xffff:
-						server_data_count += data_len
-						#print 'server_data_count = ' + str(server_data_count)
-						high = (data_len & 0xff00) >> 8
-						low = data_len & 0x00ff
-						tosend = bytearray()
-						tosend.append(high)
-						tosend.append(low)
-						tosend = tosend + data
-						inspection_client_sock.sendall(tosend)
-						reply = inspection_client_sock.recv(1)
-				#request.sendall(data)
-				print 'request_list_len = ' + str(request_list_len)
-				if request_list_len >= 16384:
-					for item in request_list:
-						request.sendall(item)
-					request_list = []
-					request_list_len = 0
-					print 'sent bulk data'
-			else:
-				data = request.recv(2048)
-				# sock_list.append(data)
-				# sock_list_len += len(data)
-				# if perform_inspection:
-				# 	data_len = len(data)
-				# 	if 0 < data_len and data_len <= 0xffff:
-				# 		high = (data_len & 0xff00) >> 8
-				# 		low = data_len & 0x00ff
-				# 		tosend = bytearray()
-				# 		tosend.append(high)
-				# 		tosend.append(low)
-				# 		tosend = tosend + data
-				# 		inspection_client_sock.sendall(tosend)
-				# 		reply = inspection_client_sock.recv(1)
-				sock.sendall(data)
-				# print 'sock_list_len = ' + str(sock_list_len)
-				# if sock_list_len >= 16384:
-				# 	for item in sock_list:
-				# 		sock.sendall(item)
-				# 	sock_list = []
-				# 	sock_list_len = 0
-				# 	print 'sent bulk data'
 
 class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 	def handle(self):
@@ -252,7 +176,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					sock.setblocking(False)
 					# forward and inspect data
 					#forward_data(self.request, sock, False)
-					simple_forward_data(self.request, sock)
+					simple_forward_data(self.request, sock, True)
 				else:
 					# send failed reply
 					failed_reply = b''
@@ -302,7 +226,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					sock.setblocking(False)
 					# forward and inspect data
 					#forward_data(self.request, sock, False)
-					simple_forward_data(self.request, sock)
+					simple_forward_data(self.request, sock, True)
 				else:
 					# send failed reply
 					failed_reply = b''
