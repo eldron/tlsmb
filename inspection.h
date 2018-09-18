@@ -16,7 +16,7 @@
 
 #define SEG_SIZE 8
 #define LIST_POOL_SIZE (100 * 1024 * 1024)
-#define MAX_STATES (32 * 1024 * 1024)
+#define MAX_STATES (64 * 1024 * 1024)
 #define EDGE_POOL_SIZE (100 * 1024 * 1024)
 #define BUFFER_SIZE (60 * 1024 * 1024)
 #define CONVERTED_BUFFER_SIZE (60 * 1024 * 1024)

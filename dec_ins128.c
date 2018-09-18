@@ -102,7 +102,7 @@ int main(int argc, char ** args){
     unsigned char seqnum[8];
     int len;
     len = fread(key, 1, 16, fin);
-    if(len != 32){
+    if(len != 16){
         printf("read key failed\n");
     } else {
         printf("read key succeeded\n");
