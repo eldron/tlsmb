@@ -9,6 +9,7 @@ from tlslite.handshakehelpers import *
 import select
 import os.path
 import time
+import errno
 
 from Queue import Queue
 
@@ -2929,26 +2930,10 @@ class MBHandshakeState(object):
 		client_record = None
 		server_header = None
 		server_record = None
-		client_to_send = []
-		server_to_send = []
+		client_to_send = Queue()
+		server_to_send = Queue()
 		while inputs:
 			readable, writable, exceptional = select.select(inputs, inputs, inputs)
-
-			for s in writable:
-				if s == self.client_sock:
-					data = bytearray()
-					for item in client_to_send:
-						data += item
-					if data:
-						self.client_sock.sendall(data)
-						client_to_send = []
-				if s == self.server_sock:
-					data = bytearray()
-					for item in server_to_send:
-						data += item
-					if data:
-						self.server_sock.sendall(data)
-						server_to_send = []
 			
 			for s in readable:
 				if s == self.client_sock:
@@ -2957,7 +2942,7 @@ class MBHandshakeState(object):
 							continue
 						else:
 							client_header, client_record = r
-							server_to_send.append(client_header.write() + client_record)
+							server_to_send.put(client_header.write() + client_record)
 							break
 
 				if s == self.server_sock:
@@ -2967,18 +2952,29 @@ class MBHandshakeState(object):
 						else:
 							server_header, server_record = r
 							data = server_header.write() + server_record
-							client_to_send.append(data)
+							client_to_send.put(data)
 							if self.perform_inspection and server_header.type == ContentType.application_data:
 								self.inspection_client_sock.sendall(data)
 								# read inspection result
 								reply = self.inspection_client_sock.recv(1)
 							break
 
+			for s in writable:
+				if s == self.client_sock:
+					if not client_to_send.empty():
+						item = client_to_send.get()
+						self.client_sock.sendall(item)
+				else:
+					if not server_to_send.empty():
+						item = server_to_send.get()
+						self.server_sock.sendall(item)
+
 			if len(exceptional) > 0:
-				print 'exception happened'
-				self.client_sock.close()
-				self.server_sock.close()
-				break
+				pass
+				# print 'exception happened'
+				# self.client_sock.close()
+				# self.server_sock.close()
+				# break
 
 
 	def select_forward_data(self, perform_inspection):

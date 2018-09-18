@@ -57,7 +57,7 @@ if __name__ == '__main__':
             # now use sock to establish TLS 1.3 connection with the remote server
             connection = TLSConnection(sock)
             settings = HandshakeSettings()
-            settings.cipherNames = [cipher_suit]
+            settings.cipherNames = [cipher_suite]
             settings.eccCurves = list([curve_name])
             settings.defaultCurve = curve_name
             settings.keyShares = [curve_name]

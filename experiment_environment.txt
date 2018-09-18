@@ -38,3 +38,42 @@ tls encryption, download file through middlebox:
 2.  start inspection server
 3.  start middlebox
     
+
+data:
+test delay, 20 connections:
+
+aes128gcm
+            can_dec=0   can_dec=1
+x448        0.719       0.761
+x25519      0.456       0.609
+secp256r1   2.287       2.552
+secp384r1   5.165       5.319
+secp521r1   8.957       9.122
+
+aes256gcm
+            can_dec=0   can_dec=1
+x448        0.727       0.764
+x25519      0.437       0.603
+secp256r1   2.363       2.6
+secp384r1   5.031       5.215
+secp521r1   9.089       9.149
+
+chacha20-poly1305
+            can_dec=0   can_dec=1
+x448        0.746       0.853
+x25519      0.446       0.619
+secp256r1   2.299       2.546
+secp384r1   5.042       5.242
+secp521r1   9.436       9.829
+
+
+inspection throughput:
+
+snort rules:
+x25519 aes128gcm
+500     16.7
+1000    
+1500
+2000
+2500
+3000
