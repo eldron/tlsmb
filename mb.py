@@ -135,6 +135,8 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					mb_handshake_state.set_client_sock(self.request)
 					#mb_handshake_state.asymmetric_middleman()
 					mb_handshake_state.stateless_middleman()
+					sock.close()
+					self.request.close()
 				else:
 					# send failed reply
 					failed_reply = b''

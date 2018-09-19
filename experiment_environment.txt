@@ -191,3 +191,8 @@ x25519 aes128gcm
 28000
 32000
 36000
+
+
+memort usage:
+# of connections    RES         VIRT
+1000                71308

@@ -2996,11 +2996,10 @@ class MBHandshakeState(object):
 							pass
 
 			if len(exceptional) > 0:
-				pass
-				# print 'exception happened'
-				# self.client_sock.close()
-				# self.server_sock.close()
-				# break
+				print 'exception happened'
+				self.client_sock.close()
+				self.server_sock.close()
+				break
 
 
 	def select_forward_data(self, perform_inspection):
