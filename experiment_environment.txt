@@ -193,6 +193,22 @@ x25519 aes128gcm
 36000
 
 
-memort usage:
-# of connections    RES         VIRT
-1000                71308
+memort usage, using memory_profiler
+cmd: mprof run --include-children mb.py ...
+# of connections    RES(MB)         VIRT
+100                 35.894531
+200                 41.191406
+300                 52.625
+400                 55.152344
+500
+600
+700
+800
+900
+1000
+
+500                 65.523438
+1000                126.703125
+1500                193.378906
+2000                253.527344
+2500                345.519531
