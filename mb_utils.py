@@ -3001,7 +3001,21 @@ class MBHandshakeState(object):
 				self.server_sock.close()
 				break
 
-
+	# for testing memory usage
+	def poll_forward_record(self):
+		poller = select.poll()
+		read_only = select.POLLIN | select.POLLPRI | select.POLLHUP | select.POLLERR
+		read_write = read_only | select.POLLOUT
+		poller.register(self.client_sock, read_write)
+		poller.register(self.server_sock, read_write)
+		while True:
+			events = poller.poll(None)
+			for fd, event in events:
+				if event & (select.POLLHUP | select.POLLERR):
+					self.client_sock.close()
+					self.server_sock.close()
+					return
+					
 	def select_forward_data(self, perform_inspection):
 		# now we should be able to read decrypted data from client_connection and server_connection
 		# new session ticket is handled in our read function

@@ -5,7 +5,6 @@ import SocketServer as socketserver
 import threading
 import socket
 import ipaddress
-import selectors2 as selectors
 from mb_utils import *
 
 udp_bind_port = 10000
@@ -265,8 +264,15 @@ if __name__ == '__main__':
 		tmp = int(sys.argv[3])
 		perform_inspection = (tmp == 1)
 		server = ThreadedTCPServer((ip, port), ThreadedTCPRequestHandler)
-		server_thread = threading.Thread(target = server.serve_forever)
-		server_thread.daemon = True
-		server_thread.start()
-		while True:
-				pass
+		server.daemon_threads = True
+		try:
+			server.serve_forever()
+		except KeyboardInterrupt:
+			print 'keyboard interrupt, exiting...'
+			server.shutdown()
+			server.server_close()
+		# server_thread = threading.Thread(target = server.serve_forever)
+		# server_thread.daemon = True
+		# server_thread.start()
+		# while True:
+		# 		pass
