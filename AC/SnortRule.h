@@ -16,6 +16,8 @@ public:
 		hit = false;
 		contents = vector<SnortContent *>();
 	}
+
+	bool is_matched();
 };
 
 void print_snort_rules(vector<SnortRule *> & rules);

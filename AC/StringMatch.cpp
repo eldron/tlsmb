@@ -1,6 +1,7 @@
 #include <unordered_map>
 #include <queue>
 #include <iostream>
+#include <vector>
 
 #include "ACState.h"
 
@@ -14,7 +15,7 @@ void initialize_states(vector<ACState> & states){
 // for string, ptr = &s
 // for signature fragment, ptr = &sf
 // for snort content, ptr = &sc
-void insert_pattern(vector<ACState> & states, string & s, void * ptr){
+void insert_pattern(vector<ACState> & states, vector<unsigned char> & s, void * ptr){
 	int i;
 	int cur = 0;
 	for(i = 0;i < s.size();i++){

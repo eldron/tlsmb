@@ -24,7 +24,7 @@ void initialize_states(vector<ACState> & states);
 // for string, ptr = &s
 // for signature fragment, ptr = &sf
 // for snort content, ptr = &sc
-void insert_pattern(vector<ACState> & states, string & s, void * ptr);
+void insert_pattern(vector<ACState> & states, vector<unsigned char> & s, void * ptr);
 
 void cal_failure_states(vector<ACState> & states);
 

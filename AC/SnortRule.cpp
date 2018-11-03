@@ -90,3 +90,33 @@ int read_snort_rules(vector<SnortRule *> & rules, string filename, int number_of
 	fin.close();
 	return total_number_of_rules;
 }
+
+bool SnortRule::is_matched(){
+	if(contents.size() == 1){
+		SnortContent * sc = contents[0];
+		return sc->hit;
+	} else if(contents.size() < 1){
+		return false;
+	} else {
+		int i = 1;
+		for(i = 1;i < contents.size();i++){
+			SnortContent * pre = contents[i - 1];
+			SnortContent * cur = contents[i];
+			if(pre->hit && cur->hit){
+				if(cur->has_distance){
+					if(cur->offset < pre->offset + cur->distance + cur->s.size()){
+						return false;
+					}
+				}
+				if(cur->has_within){
+					if(cur->offset > pre->offset + cur->within + cur->s.size()){
+						return false;
+					}
+				}
+			} else {
+				return false;
+			}
+		}
+		return true;
+	}
+}
