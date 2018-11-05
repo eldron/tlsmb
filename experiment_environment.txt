@@ -4,6 +4,11 @@ sudo apt-get install python-pip
 pip install six
 pip install ecdsa
 pip install selectors2
+sudo yum install python-devel
+sudo pip install pycrypto
+sudo pip install M2Cryto
+sudo yum install gmp-devel
+sudo pip install gmpy
 git clone tlslite-ng
 sudo python setup.py install
 
