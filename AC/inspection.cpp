@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <netinet/in.h>
 
 #include <iostream>
 #include <vector>
@@ -62,8 +63,8 @@ void get_nonce(uint64_t * number, unsigned char * nonce, unsigned char * static_
 }
 
 int main(int argc, char ** args){
-	if(argc != 5){
-		cout << "usage: " << string(args[0]) << " rule_type filename number_of_rules enc_method" << endl;
+	if(argc != 6){
+		cout << "usage: " << string(args[0]) << " rule_type filename number_of_rules enc_method port" << endl;
 		cout << "rule_type: 0 for clamav, 1 for snort" << endl;
 		cout << "filename: rules file name" << endl;
 		cout << "enc_method: 0 for no encryption, 128 for aes128gcm, 256 for aes256gcm, 20 for chacha20-poly1305" << endl;
@@ -74,6 +75,7 @@ int main(int argc, char ** args){
 	string filename = string(args[2]);
 	int number_of_rules = stoi(string(args[3]));
 	int enc_method = stoi(string(args[4]));
+	int port_number = stoi(string(args[5]));
 	
 	vector<SnortRule *> snort_rules;
 	vector<ClamavRule *> clamav_rules;
@@ -99,44 +101,38 @@ int main(int argc, char ** args){
 	cal_failure_states(states);
 
 	int server_sock;
-	if((server_sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0){
+	if((server_sock = socket(AF_INET, SOCK_STREAM, 0)) < 0){
 		perror("create unix server socket failed");
 		exit(1);
 	} else {
 		fprintf(stderr, "created server socket\n");
 	}
 
-	struct sockaddr_un server_address;
-	server_address.sun_family = AF_UNIX;
-	strcpy(server_address.sun_path, SERVER_ADDRESS);
-	unlink(SERVER_ADDRESS);
-	int server_address_len = sizeof(server_address.sun_family) + strlen(server_address.sun_path);
-	if(bind(server_sock, (struct sockaddr *) &server_address, server_address_len) < 0){
-		perror("bind unix server socket failed");
-		exit(1);
+	struct sockaddr_in server_address;
+	server_address.sin_family = AF_INET;
+	server_address.sin_addr.s_addr = INADDR_ANY;
+	server_address.sin_port = htons(port_number);
+	if(bind(server_sock, (struct sockaddr *) &server_address, sizeof(server_address)) < 0){
+		perror("bind failed");
+		return 0;
 	} else {
-		fprintf(stderr, "bind server socket\n");
+		cout << "bind server socket" << endl;
 	}
-
 	if(listen(server_sock, 5) < 0){
 		perror("listen failed");
-		exit(1);
+		return 0;
 	} else {
-		fprintf(stderr, "server socket listening\n");
+		cout << "server socket listening" << endl;
 	}
-
-	int client_sock;
-	struct sockaddr_un client_address;
-	unsigned int client_address_len;
-	if((client_sock = accept(server_sock, (struct sockaddr *) &client_address, &client_address_len)) < 0){
+	struct sockaddr_in client_address;
+	int client_address_len = sizeof(client_address);
+	int client_sock = accept(server_sock, (struct sockaddr *) &client_address, (socklen_t *) &client_address_len);
+	if(client_sock < 0){
 		perror("accept failed");
-		exit(1);
+		return 0;
 	} else {
-		fprintf(stderr, "accepted client socket\n");
+		cout << "accepted client socket" << endl;
 	}
-	// we use stdio to read the socket
-	FILE * fin = fdopen(client_sock, "r");
-	//int len;
 
     unsigned char record[1000000];
     int offset = 0;
@@ -150,11 +146,14 @@ int main(int argc, char ** args){
 	if(enc_method == ENC_NULL){
 		int len;
 		while(1){
-	        len = fread(record, 1, 1, fin);
-	        len = fread(record + 1, 1, 1, fin);
+	        //len = fread(record, 1, 1, fin);
+	        //len = fread(record + 1, 1, 1, fin);
+	        len = read(client_sock, record, 1);
+	        len = read(client_sock, record + 1, 1);
 	        unsigned datalen = (record[0] << 8) | record[1];
 	        printf("datalen = %u\n", datalen);
-	        len = fread(record, 1, datalen, fin);
+	        //len = fread(record, 1, datalen, fin);
+	        len = read(client_sock,  record, datalen);
 	        if(len == datalen){
 	            
 	        } else {
@@ -196,17 +195,21 @@ int main(int argc, char ** args){
 	    int len;
 
 	    if(enc_method != ENC_128){
-	    	len = fread(key, 1, 32, fin);
+	    	//len = fread(key, 1, 32, fin);
+	    	len = read(client_sock, key, 32);
 	    	cout << (len != 32 ? "read key failed" : "read key succeeded") << endl;
 	    } else {
-	    	len = fread(key, 1, 16, fin);
+	    	//len = fread(key, 1, 16, fin);
+	    	len = read(client_sock, key, 16);
 	    	cout << (len != 16 ? "read key failed" : "read key succeeded") << endl;
 	    }
 	    
-	    len = fread(static_iv, 1, 12, fin);
+	    //len = fread(static_iv, 1, 12, fin);
+	    len = read(client_sock, static_iv, 12);
 	    cout << (len != 12 ? "read iv failed" : "read iv succeeded") << endl;
 
-	    len = fread(seqnum, 1, 8, fin);
+	    //len = fread(seqnum, 1, 8, fin);
+	    len = read(client_sock, seqnum, 8);
 	    cout << (len != 8 ? "read seqnum failed" : "read seqnum succeeded") << endl;
 	    
 	    uint64_t sequence_number = bytes_to_uint64t(seqnum);
@@ -232,7 +235,8 @@ int main(int argc, char ** args){
 	    int outlen;
 	    int rv;
 	    while(1){
-	        len = fread(header, 1, 1, fin);
+	        //len = fread(header, 1, 1, fin);
+	        len = read(client_sock, header, 1);
 	        if(len == 1){
 	            //printf("received opaque type\n");
 	        } else {
@@ -245,7 +249,8 @@ int main(int argc, char ** args){
 	            printf("opaque type wrong\n");
 	        }
 
-	        len = fread(header + 1, 1, 2, fin);
+	        //len = fread(header + 1, 1, 2, fin);
+	        len = read(client_sock, header + 1, 2);
 	        if(len == 2){
 	            //printf("read version succeeded\n");
 	        } else {
@@ -258,7 +263,8 @@ int main(int argc, char ** args){
 	            printf("version is not 0x0303\n");
 	        }
 
-	        len = fread(header + 3, 1, 2, fin);
+	        //len = fread(header + 3, 1, 2, fin);
+	        len = read(client_sock, header + 3, 2);
 	        if(len == 2){
 	            //printf("read length succeeded\n");
 	        } else {
@@ -266,7 +272,8 @@ int main(int argc, char ** args){
 	        }
 	        unsigned int ciphertext_len = (header[3] << 8) | header[4];
 	        
-	        len = fread(record, 1, ciphertext_len, fin);
+	        //len = fread(record, 1, ciphertext_len, fin);
+	        len = read(client_sock, record, ciphertext_len);
 	        if(len == ciphertext_len){
 	            //printf("read encrypted record succeeded\n");
 	        } else {
@@ -317,6 +324,7 @@ int main(int argc, char ** args){
 				offset++;
 	        }
 	        send(client_sock, matched ? matched_reply : no_match_reply, 1, 0);
+	        //cout << "inspection result sent" << endl;
 
 	        /* Set expected tag value. */
 	        EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, 16, gcmtag);

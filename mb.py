@@ -10,6 +10,7 @@ from mb_utils import *
 udp_bind_port = 10000
 udp_associate_support = False
 perform_inspection = True
+inspection_port_number = 30000
 
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 	pass
@@ -129,7 +130,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					#forward_data(self.request, sock)
 					self.request.setblocking(0)
 					sock.setblocking(0)
-					mb_handshake_state = MBHandshakeState(perform_inspection)
+					mb_handshake_state = MBHandshakeState(perform_inspection, inspection_port_number)
 					mb_handshake_state.set_server_sock(sock)
 					mb_handshake_state.set_client_sock(self.request)
 					#mb_handshake_state.asymmetric_middleman()
@@ -185,7 +186,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					#forward_data(self.request, sock)
 					self.request.setblocking(0)
 					sock.setblocking(0)
-					mb_handshake_state = MBHandshakeState(perform_inspection)
+					mb_handshake_state = MBHandshakeState(perform_inspection, inspection_port_number)
 					mb_handshake_state.set_server_sock(sock)
 					mb_handshake_state.set_client_sock(self.request)
 					#mb_handshake_state.asymmetric_middleman()
@@ -256,12 +257,13 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 				self.request.close()
 
 if __name__ == '__main__':
-	if len(sys.argv) != 4:
-		print 'usage: ' + sys.argv[0] + ' ip port_number perform_inspection'
+	if len(sys.argv) != 5:
+		print 'usage: ' + sys.argv[0] + ' ip port_number perform_inspection inspection_port'
 	else:
 		ip = sys.argv[1]
 		port = int(sys.argv[2])
 		tmp = int(sys.argv[3])
+		inspection_port_number = int(sys.argv[4])
 		perform_inspection = (tmp == 1)
 		server = ThreadedTCPServer((ip, port), ThreadedTCPRequestHandler)
 		server.daemon_threads = True

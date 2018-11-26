@@ -767,8 +767,9 @@ def fake_clientSendClientHello(connection, settings, session, srpUsername,
 
 
 class MBHandshakeState(object):
-	def __init__(self, perform_inspection):
+	def __init__(self, perform_inspection, inspection_port_number):
 		self.perform_inspection = perform_inspection
+		self.inspection_port_number = inspection_port_number
 		self.client_hello = None
 		self.server_hello = None
 		self.state = MB_STATE_INITIAL_WAIT_CLIENT_HELLO
@@ -819,8 +820,8 @@ class MBHandshakeState(object):
 
 		# ipc socket
 		if self.perform_inspection:
-			self.inspection_client_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-			self.inspection_client_sock.connect('AC/inspection_server')
+			self.inspection_client_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+			self.inspection_client_sock.connect(('localhost', self.inspection_port_number))
 
 		self.clear_tosend_list_interval = 0
 		self.app_data_len = 0
@@ -2977,8 +2978,10 @@ class MBHandshakeState(object):
 							client_to_send.put(data)
 							if self.perform_inspection and server_header.type == ContentType.application_data:
 								self.inspection_client_sock.sendall(data)
+								#print 'inspection_client_sock sent data'
 								# read inspection result
 								reply = self.inspection_client_sock.recv(1)
+								#print 'inspection result received'
 							break
 
 			for s in writable:
