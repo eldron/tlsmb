@@ -35,6 +35,9 @@ LD_LIBRARY_PATH=~/Documents/openssl ./inspection 0 rules_96000 2000 0
 4.  run http_client.py (direct download or through middlebox)
 time python http_client.py 127.0.0.1 10000 127.0.0.1 20000
 
+snort rules:
+
+
 tls encryption, tls server
 1.  cd into test_server
     python tls.py server -c serverX509Cert.pem -k serverX509Key.pem 127.0.0.1:20000
