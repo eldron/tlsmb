@@ -49,7 +49,7 @@ def parse_method_selection_msg(msg):
 def simple_forward_data(request, sock, perform_inspection):
 	if perform_inspection:
 		inspection_client_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-		inspection_client_sock.connect('inspection_server')
+		inspection_client_sock.connect('AC/inspection_server')
 
 	print 'simple_forward_data called'
 	request.setblocking(0)
@@ -76,7 +76,7 @@ def simple_forward_data(request, sock, perform_inspection):
 						tosend.append(low)
 						tosend += data
 						inspection_client_sock.sendall(tosend)
-						print 'write data to inspection sock'
+						#print 'write data to inspection sock'
 						# read reply from inspection server
 						reply = inspection_client_sock.recv(1)
 					request_to_send_list.put(data)

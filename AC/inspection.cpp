@@ -64,6 +64,9 @@ void get_nonce(uint64_t * number, unsigned char * nonce, unsigned char * static_
 int main(int argc, char ** args){
 	if(argc != 5){
 		cout << "usage: " << string(args[0]) << " rule_type filename number_of_rules enc_method" << endl;
+		cout << "rule_type: 0 for clamav, 1 for snort" << endl;
+		cout << "filename: rules file name" << endl;
+		cout << "enc_method: 0 for no encryption, 128 for aes128gcm, 256 for aes256gcm, 20 for chacha20-poly1305" << endl;
 		return 0;
 	}
 
@@ -191,11 +194,17 @@ int main(int argc, char ** args){
 	    unsigned char static_iv[12];
 	    unsigned char seqnum[8];
 	    int len;
-	    len = fread(key, 1, 32, fin);
-	    cout << (len != 32 ? "read key failed" : "read key succeeded") << endl;
+
+	    if(enc_method != ENC_128){
+	    	len = fread(key, 1, 32, fin);
+	    	cout << (len != 32 ? "read key failed" : "read key succeeded") << endl;
+	    } else {
+	    	len = fread(key, 1, 16, fin);
+	    	cout << (len != 16 ? "read key failed" : "read key succeeded") << endl;
+	    }
 	    
 	    len = fread(static_iv, 1, 12, fin);
-	    cout << (len != 32 ? "read iv failed" : "read iv succeeded") << endl;
+	    cout << (len != 12 ? "read iv failed" : "read iv succeeded") << endl;
 
 	    len = fread(seqnum, 1, 8, fin);
 	    cout << (len != 8 ? "read seqnum failed" : "read seqnum succeeded") << endl;
@@ -207,7 +216,7 @@ int main(int argc, char ** args){
 	    ctx = EVP_CIPHER_CTX_new();
 	    /* Select cipher */
 	    if(enc_method == ENC_128){
-	    	EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL);
+	    	EVP_DecryptInit_ex(ctx, EVP_aes_128_gcm(), NULL, NULL, NULL);
 	    } else if(enc_method == ENC_256){
 	    	EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, NULL, NULL);
 	    } else {

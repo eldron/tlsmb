@@ -820,7 +820,7 @@ class MBHandshakeState(object):
 		# ipc socket
 		if self.perform_inspection:
 			self.inspection_client_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-			self.inspection_client_sock.connect('inspection_server')
+			self.inspection_client_sock.connect('AC/inspection_server')
 
 		self.clear_tosend_list_interval = 0
 		self.app_data_len = 0

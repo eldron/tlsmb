@@ -1,5 +1,6 @@
 experiment environment:
 
+sudo yum install openssl-devel
 sudo apt-get install python-pip
 pip install six
 pip install ecdsa
@@ -13,24 +14,37 @@ git clone tlslite-ng
 sudo python setup.py install
 
 
+or use virtualenv:
+sudo yum install python-devel
+sudo yum install gmp-devel
+first virtualenv somedir, activate it
+then: pip install six ecdsa selectors2 pycrypto M2Cryto gmpy
+then python setup.py install (to install tlslite)
+
 Run experiments:
-1.  cd into test_server
-    tls.py server -c serverX509Cert.pem -k serverX509Key.pem 127.0.0.1:4443
-2.  start inspection server
-    ./inspection rule_type rule_file number_of_rules
-    e.g. ./inspection 0 rules_2000 2000
-3.  start middlebox
-    python mb.py 10000
-4.  run tls_client.py
-    
 
 no encryption, http server:
 1.  cd into test_server
-    python -m SimpleHTTPServer 20000
-2.  start inspection server
+    python simple_http_server 127.0.0.1:20000
+
+2.  start inspection server:
+LD_LIBRARY_PATH=~/Documents/openssl ./inspection 0 rules_96000 2000 0
+
 3.  start middlebox
-    python simple_mb.py 10000
+    python simple_mb.py 127.0.0.1 10000 1
 4.  run http_client.py (direct download or through middlebox)
+time python http_client.py 127.0.0.1 10000 127.0.0.1 20000
+
+tls encryption, tls server
+1.  cd into test_server
+    python tls.py server -c serverX509Cert.pem -k serverX509Key.pem 127.0.0.1:20000
+2.  start inspection server
+    LD_LIBRARY_PATH=~/Documents/openssl ./inspection 0 rules_96000 2000 128
+3.  start middlebox
+    python mb.py 127.0.0.1 10000 1
+4.  run tls_client.py
+python tls_client.py 127.0.0.1 10000 127.0.0.1 20000 aes256gcm x25519
+
 
 tls encryption, no middlebox:
 1.  cd into test_server
@@ -43,6 +57,34 @@ tls encryption, download file through middlebox:
 2.  start inspection server
 3.  start middlebox
     
+test connection setup delay:
+python tls.py server -c serverX509Cert.pem -k serverX509Key.pem --psk 0000000000000000000000000000000000000000000000000000000000000000 --psk-ident pskidentity --psk-sha384 202.197.15.1:20000
+
+sudo systemctl stop firewalld
+desktop as server, x270 as client, 100 connections
+psk_only:
+            can_dec=0   can_dec=1
+x25519      1.614       2.764
+x448        3.003       3.345
+secp256r1   11.455      13.051
+secp384r1   27.516      29.627
+secp521r1   49.278      51.043
+
+psk_with_dhe:
+            can_dec=0   can_dec=1
+x25519      1.686       2.855
+x448        3.042       3.356
+secp256r1   11.486      13.505
+secp384r1   27.814      29.507
+secp521r1   49.310      52.288
+
+dhe_only
+            can_dec=0   can_dec=1
+x25519      1.988       2.934
+x448        3.196       3.515
+secp256r1   11.580      12.525      
+secp384r1   27.798      29.718
+secp521r1   52.026      53.455
 
 data:
 test delay, 20 connections:
