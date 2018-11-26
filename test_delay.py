@@ -64,17 +64,21 @@ if __name__ == '__main__':
             settings.keyShares = [curve_name]
             mb_utils.fake_handshakeClientCert(connection, settings=settings)
             # 2 \r\n
-            connection.send("GET /smallfile.txt HTTP/1.0\r\n\r\n")
             time1 = time.time()
-            while True:
-                r = connection.recv(20000)
-                if isinstance(r, str):
-                    time2 = time.time()
-                    print r
-                    interval = time2 - time1
-                    print interval
-                    break
+            for i in range(1000):
+                connection.send("GET /smallfile.txt HTTP/1.0\r\n\r\n")
+                while True:
+                    r = connection.recv(20000)
+                    if isinstance(r, str):
+                        # time2 = time.time()
+                        # print r
+                        # interval = time2 - time1
+                        # print interval
+                        break
+            time2 = time.time()
             connection.close()
+            interval = time2 - time1
+            print interval
             # count = 0
             # block_size = 20000
             # while True:
