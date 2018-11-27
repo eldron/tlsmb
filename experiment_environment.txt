@@ -22,21 +22,13 @@ then: pip install six ecdsa selectors2 pycrypto M2Cryto gmpy
 then python setup.py install (to install tlslite)
 
 Run experiments:
-
-no encryption, http server:
-1.  cd into test_server
-    python simple_http_server 127.0.0.1:20000
-
-2.  start inspection server:
-LD_LIBRARY_PATH=~/Documents/openssl ./inspection 0 rules_96000 2000 0
-
-3.  start middlebox
-    python simple_mb.py 127.0.0.1 10000 1
-4.  run http_client.py (direct download or through middlebox)
-time python http_client.py 127.0.0.1 10000 127.0.0.1 20000
-
+sudo systemctl stop firewalld
 
 small packets, response delay:
+server: python tls_test_delay_server.py 202.197.15.143 20000 200
+client: python test_delay.py 202.197.15.1 10001 202.197.15.143 20000 aes256gcm x25519
+middlebox: run inspection and mb.py
+
 clamav rules:
 	chacha20		aes128			aes256
 10000	1.44302916527		1.03634786606		1.06948590279
@@ -97,6 +89,68 @@ content_size	chacha20		aes128			aes256
 800		4.46838521957		4.13116908073		3.91422200203
 900		4.83099007607		4.62701201439		4.26197290421
 1000		5.39338684082		4.6564309597		4.52933192253
+
+no inspection
+content_size	chacha20		aes128			aes256
+100		1.7236931324		1.4031598568		1.40770506859
+200		2.06182384491		1.77138113976		1.69611597061
+300		2.36127305031		2.0097181797		2.01165294647
+400		2.59605908394		2.36268806458		2.36646294594
+500		2.8206410408		2.66895103455		2.67404413223
+600		3.13516712189		3.00095200539		3.05771303177
+700		3.32717490196		3.30087184906		3.30503582954
+800		3.70357704163		3.63128685951		3.62729501724
+900		4.00518989563		3.94494795799		3.96336698532
+1000		4.5146420002		4.28459405899		4.31893706322
+
+
+no encryption, http server:
+1.  cd into test_server
+    python simple_http_server 202.197.15.143:20000
+
+2.  start inspection server:
+LD_LIBRARY_PATH=~/Documents/openssl ./inspection 0 rules_96000 2000 0
+
+3.  start middlebox
+    python simple_mb.py 127.0.0.1 10000 1
+4.  run http_client.py (direct download or through middlebox)
+time python http_client.py 127.0.0.1 10000 127.0.0.1 20000
+
+desktop as middlebox, x270 as client and server
+numer_of_rules	no_enc	chacha20	aes128		aes256
+10000		2.757
+20000		2.967
+30000		3.222
+40000		3.205
+50000		3.252
+60000		3.526
+70000		3.775
+80000		3.922
+90000		3.778
+
+chacah20
+	10000	20000	30000	40000	50000	60000	70000	80000	90000
+1	13.967	13.982	13.977	14.06	13.974	14.240
+2	13.984	13.931	21.183	13.972	13.949	13.989
+3	14.012	15.751	13.952	13.954	13.95	14.624
+4	15.955	14.272	14.012	21.909	14.119	13.97
+5	13.953	13.968	13.949	13.998	13.922	14.243
+mean
+
+
+no inspection:
+	chacha20	aes128		aes256
+1	14.464		16.937		16.177
+2	13.961		16.180		16.211
+3	17.824		16.187		16.181
+4	13.986		16.149		16.202
+5	14.563		16.197		16.238
+6	14.712		16.164		16.168
+7	16.07		16.125		16.263
+8	14.395		16.146		16.162
+9	14.001		16.196		16.243
+10	13.98		16.381		16.221
+mean
 
 
 tls encryption, tls server
