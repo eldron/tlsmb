@@ -14,6 +14,7 @@ from Queue import Queue
 udp_bind_port = 10000
 udp_associate_support = False
 perform_inspection = False
+inspection_number = 20000
 
 class ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 	pass
@@ -46,10 +47,10 @@ def parse_method_selection_msg(msg):
 # def recv_tls_tlsrecord(sock):
 # 	# receive complete tls record from sock
 
-def simple_forward_data(request, sock, perform_inspection):
+def simple_forward_data(request, sock, perform_inspection, inspection_number):
 	if perform_inspection:
-		inspection_client_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-		inspection_client_sock.connect('AC/inspection_server')
+		inspection_client_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		inspection_client_sock.connect(('localhost', inspection_number))
 
 	print 'simple_forward_data called'
 	request.setblocking(0)
@@ -177,7 +178,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					sock.setblocking(False)
 					# forward and inspect data
 					#forward_data(self.request, sock, False)
-					simple_forward_data(self.request, sock, perform_inspection)
+					simple_forward_data(self.request, sock, perform_inspection, inspection_number)
 				else:
 					# send failed reply
 					failed_reply = b''
@@ -227,7 +228,7 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 					sock.setblocking(False)
 					# forward and inspect data
 					#forward_data(self.request, sock, False)
-					simple_forward_data(self.request, sock, perform_inspection)
+					simple_forward_data(self.request, sock, perform_inspection, inspection_number)
 				else:
 					# send failed reply
 					failed_reply = b''
@@ -291,13 +292,14 @@ class ThreadedTCPRequestHandler(socketserver.BaseRequestHandler):
 				self.request.close()
 
 if __name__ == '__main__':
-	if len(sys.argv) != 4:
-		print 'usage: ' + sys.argv[0] + ' ip port_number perform_inspection'
+	if len(sys.argv) != 5:
+		print 'usage: ' + sys.argv[0] + ' ip port_number perform_inspection inspection_number'
 	else:
 		ip = sys.argv[1]
 		port = int(sys.argv[2])
 		tmp = int(sys.argv[3])
 		perform_inspection = (tmp == 1)
+		inspection_number = int(sys.argv[4])
 
 		server = ThreadedTCPServer((ip, port), ThreadedTCPRequestHandler)
 		server.serve_forever()
