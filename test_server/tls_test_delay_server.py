@@ -3,8 +3,8 @@ import sys
 from tlslite.api import *
 
 if __name__ == '__main__':
-	if len(sys.argv) != 3:
-		print 'usage: ' + sys.argv[0] + 'ip port'
+	if len(sys.argv) != 4:
+		print 'usage: ' + sys.argv[0] + ' ip port content_size'
 	else:
 		private_key_file = "serverX509Key.pem"
 		cert_file = "serverX509Cert.pem"
@@ -23,6 +23,7 @@ if __name__ == '__main__':
 
 		ip = sys.argv[1]
 		port = int(sys.argv[2])
+		content_size = int(sys.argv[3])
 		sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		sock.bind((ip, port))
 		sock.listen(5)
@@ -38,4 +39,5 @@ if __name__ == '__main__':
 				request = conn.recv(2000)
 				if isinstance(request, str):
 					break
-			conn.sendall("tls test delay response")
+			#conn.sendall("tls test delay response")
+			conn.sendall(bytearray(content_size))
