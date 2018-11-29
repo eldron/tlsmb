@@ -1,6 +1,7 @@
 import socket
 import sys
 import ipaddress
+import time
 
 # the naive version
 
@@ -31,7 +32,7 @@ if __name__ == '__main__':
         server_port = int(sys.argv[2])
         direct_download_file(server_ip, server_port)
     else:
-        file_size = 9637200
+        file_size = 88602518
         proxy_ip = sys.argv[1]
         proxy_port = int(sys.argv[2])
         server_ip = sys.argv[3]
@@ -71,16 +72,22 @@ if __name__ == '__main__':
         else:
             print 'received succeeded reply, socks 5 proxy established connection with the remote server'
             # now use sock to download file from HTTP server
-            sock.sendall("GET /bigger.pcap HTTP/1.0\r\n\r\n")
+            sock.sendall("GET /combined.pcap HTTP/1.0\r\n\r\n")
             count = 0
             block_size = 1024 * 1024
+            time1 = time.time()
             while True:
                 r = sock.recv(block_size)
                 if len(r) > 0:
                     count += len(r)
-                    #print 'received ' + str(count) + 'bytes data'
+                    print 'received ' + str(count) + 'bytes data'
                     if count >= file_size:
                         print 'received ' + str(count) + 'bytes data, exiting'
+                        time2 = time.time()
+                        interval = time2 - time1
+                        throughput = file_size / interval / 1024
+                        print throughput
+                        print 'KB/s'
                         break
                 else:
                     print 'received ' + str(count) + ' bytes data, receive file completed'

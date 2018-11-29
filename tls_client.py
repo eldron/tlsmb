@@ -72,8 +72,8 @@ if __name__ == '__main__':
                     print 'received 0 or 1'
                 elif isinstance(r, str):
                     if len(r) > 0:
-                        print 'received ' + str(len(r)) + ' bytes'
                         count = count + len(r)
+                        print 'received ' + str(count) + ' bytes'
                     else:
                         print 'received ' + str(count) + 'bytes data, receive file completed'
                         break

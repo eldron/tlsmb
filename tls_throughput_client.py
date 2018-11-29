@@ -81,5 +81,8 @@ if __name__ == '__main__':
                         break
             time2 = time.time()
             interval = time2 - time1
+            throughput = filesize / interval / 1024
+            print throughput
+            print 'KB/s'
             connection.send(bytearray('receive file completed'))
             connection.close()

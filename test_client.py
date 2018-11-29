@@ -3,6 +3,7 @@ from tlslite import TLSConnection
 from tlslite.api import *
 import sys
 import ipaddress
+import time
 
 def direct_download_file(server_ip, server_port):
     sock = socket.socket(AF_INET, SOCK_STREAM)
@@ -63,10 +64,11 @@ def download_file_through_middlebox(proxy_ip, proxy_port, server_ip, server_port
         connection = TLSConnection(sock)
         connection.handshakeClientCert()
         # 2 \r\n
-        connection.send("GET /bigger.pcap HTTP/1.0\r\n\r\n")
+        connection.send("GET /combined.pcap HTTP/1.0\r\n\r\n")
         count = 0
         block_size = 1024 * 1024
-        file_size = 9637200
+        file_size = 88602518
+        time1 = time.time()
         while True:
             r = connection.recv(block_size)
             #r = sock.recv(block_size)
@@ -76,8 +78,14 @@ def download_file_through_middlebox(proxy_ip, proxy_port, server_ip, server_port
                 if len(r) > 0:
                     #print 'len r = ' + str(len(r))
                     count = count + len(r)
+                    print 'received ' + str(count) + 'bytes of data'
                     if count >= file_size:
                         print 'received ' + str(count) + ' bytes data, receive file completed'
+                        time2 = time.time()
+                        interval = time2 - time1
+                        throughput = file_size / interval / 1024
+                        print throughput
+                        print 'KB/s'
                         break 
                 else:
                     print 'received ' + str(count) + 'bytes data, receive file completed'
