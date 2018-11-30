@@ -171,6 +171,7 @@ int main(int argc, char ** args){
 					for(auto ptr : states[cur].output){
 						SnortContent * sc = (SnortContent *) ptr;
 						sc->offset = offset;
+						sc->hit = true;
 						if(sc->rule->is_matched()){
 							matched = true;
 						}
@@ -179,6 +180,7 @@ int main(int argc, char ** args){
 					for(auto ptr : states[cur].output){
 						SignatureFragment * sf = (SignatureFragment *) ptr;
 						sf->offset = offset;
+						sf->hit = true;
 						if(sf->rule->is_matched()){
 							matched = true;
 						}
